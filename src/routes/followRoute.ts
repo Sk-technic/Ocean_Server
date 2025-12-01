@@ -6,7 +6,7 @@ export const followRouter = Router();
 
 followRouter.route("/follow/:id").post(followController.followRequest);
 followRouter.route("/accept").post(followController.AcceptRequest);
-followRouter.route("/reject/:id").delete(followController.RequestReject);
+followRouter.route("/reject").post(followController.RequestReject);
 followRouter.route("/unfollow/:id").delete(followController.UnFollowUser);
 followRouter.route("/block/:id").post(followController.BlockUser);
 followRouter.route("/unblock/:id").delete(followController.UnBlockUser);

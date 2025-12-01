@@ -48,6 +48,7 @@ export interface IChatRoom extends Document {
   createdBy:Types.ObjectId;
   // Per-user participant state
   participants: {
+    _id:Types.ObjectId,
     user: Types.ObjectId;
     unreadCount: number;
     isMuted: boolean;

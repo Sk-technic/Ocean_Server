@@ -37,10 +37,12 @@ export const authMiddleware = async (
 
     // Attach user info to request object with typing
     req.identity = user?._id
+    const userId = user?._id.toString()
     const userdata = {
       email: user?.email,
       username: user?.username,
-      fullname: user?.fullName
+      fullName: user?.fullName,
+      id:userId
     }
     req.User = userdata
     next();

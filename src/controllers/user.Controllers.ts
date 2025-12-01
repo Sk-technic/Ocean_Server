@@ -37,3 +37,8 @@ export const GetUser = asyncHandler(async (req:Request,res:Response) => {
     const result = await userService.GetUser(req)
         res.status(200).json(new ApiResponse(200,result,"find successfull."));
 })
+
+export const AccountPrivacy = asyncHandler(async (req:Request, res:Response)=>{
+    const result = await userService.AccountPrivacy(req)
+    res.status(200).json(new ApiResponse(200,result,"Account Privacy updated"))
+})

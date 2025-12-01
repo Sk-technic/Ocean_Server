@@ -330,7 +330,7 @@ export const verifyEmail = async (req: Request) => {
 
 export const sendForgetPasswordMail = async (req: Request) => {
   const email = req?.User?.email
-  const Name = req?.User?.fullname
+  const Name = req?.User?.fullName
 
   const { rawToken, hashedToken } = await generateToken(10)
 

@@ -197,9 +197,9 @@ export const SearchQuery = async (req: Request) => {
   const escapedQuery = searchTerm.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 
   const loggedinUserName = req.User.username;
-  const loggedinFullName = req.User.fullname;
-  const loggedinFirstName = req.User.fullname?.split(" ")[0];
-  const loggedinLastName = req.User.fullname?.split(" ")[1];
+  const loggedinFullName = req.User.fullName;
+  const loggedinFirstName = req.User.fullName?.split(" ")[0];
+  const loggedinLastName = req.User.fullName?.split(" ")[1];
 
   const users = await Collections.UserModel.aggregate([
     // MATCH USERS
@@ -332,9 +332,13 @@ export const SearchQuery = async (req: Request) => {
     {
       $addFields: {
         followStatus: {
-          $ifNull: ["$followInfo.status", "not-following"],
-        },
-      },
+          $cond: [
+            { $eq: ["$followInfo", null] },
+            "$$REMOVE",     // remove the field entirely
+            "$followInfo.status"
+          ]
+        }
+      }
     },
 
     {
@@ -382,7 +386,7 @@ export const GetUser = async (req: Request) => {
 
   if (!room) throw new ApiError(404, "Room not found");
   const filterUser = room.participants.filter(
-    (p) => p._id.toString() !== loggedInUserId.toString()
+    (p) => p?.user.toString() !== loggedInUserId.toString()
   );
 
   if (!filterUser) throw new ApiError(404, "Other user not found in room");
@@ -428,4 +432,31 @@ export const updateLastActive = async (userId: string, isOnline: boolean) => {
     { lastActive: isOnline ? null : new Date() },
     { new: true }
   );
+};
+
+export const AccountPrivacy = async (req: Request) => {
+  const userId = req.params.userId;
+  const key = req.query.key as string;
+  if (!userId || userId.toString() === req.identity) {
+    throw new ApiError(400, "user not matched");
+  }
+  const isPrivateValue = Boolean(Number(key));
+
+  const result = await Collections.UserModel.findOneAndUpdate(
+    {
+      _id: userId,
+      isPrivate: { $ne: isPrivateValue }
+    },
+    {
+      isPrivate: isPrivateValue
+    },
+    {
+      new: true
+    }
+  );
+  const updatedUser = {
+    _id: result?._id,
+    isPrivate: result?.isPrivate
+  }
+  return updatedUser;
 };

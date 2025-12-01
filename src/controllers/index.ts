@@ -2,7 +2,7 @@ import { addRecoveryEmail, autoLogin, changePassword, getUser, googleAuth, logou
 import { GetMessages, GetChatUsers, getRoomDetails, SendMedia } from "./chat.Controllers";
 import { AcceptRequest, BlockUser, followRequest, RequestReject, UnBlockUser, UnFollowUser } from "./follower.Controllers";
 import { GetNotifications } from "./notifications.Controllers";
-import { DeleteCoverImage, DeleteProfileImage, EditCoverImage, EditProfileImage, GetUser, SearchQuery, UpdateProfile } from "./user.Controllers";
+import { AccountPrivacy, DeleteCoverImage, DeleteProfileImage, EditCoverImage, EditProfileImage, GetUser, SearchQuery, UpdateProfile } from "./user.Controllers";
 
 export const authController = {
     signup, 
@@ -27,7 +27,8 @@ export const userController = {
  DeleteProfileImage,
  UpdateProfile,
  SearchQuery,
- GetUser
+ GetUser,
+ AccountPrivacy
 }
 
 export const chatController = {

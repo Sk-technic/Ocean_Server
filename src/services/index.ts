@@ -2,7 +2,7 @@ import { addRecoveryEmail, autoLogin, changePassword, getUser, googleAuth, logou
 import { createSingleRoom, editMessage, getMessages, sendMedia, GetRoomDetails, unsendMessage, clearChat, chatRooms, sendMessage, readChat, MessageSeenUpdate, acceptMessageRequest } from "./chat.Services";
 import { acceptRequest, blockUser, rejectRequest, sendFollow, unblockUser, unfollowUser } from "./follower.Service";
 import { getNotifications } from "./notifications";
-import { DeleteCoverImage, DeleteProfileImage, EditCoverImage, EditProfileImage, SearchQuery, UpdateProfile, GetUser, SetOnline, SetAway, updateLastActive } from "./user.Services";
+import { DeleteCoverImage, DeleteProfileImage, EditCoverImage, EditProfileImage, SearchQuery, UpdateProfile, GetUser, SetOnline, SetAway, updateLastActive, AccountPrivacy } from "./user.Services";
 
 export const authService = {
     signup,
@@ -29,7 +29,8 @@ export const userService = {
     GetUser,
     SetOnline,
     updateLastActive,
-    SetAway
+    SetAway,
+    AccountPrivacy
 }
 
 export const chatService = {

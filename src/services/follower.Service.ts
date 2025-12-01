@@ -78,7 +78,7 @@ export const sendFollow = async (req: Request) => {
         text: isPrivate
             ? `${followerUser?.fullName} sent you a follow request`
             : `${followerUser?.fullName} started following you`,
-        isRead: false,
+        isRead: isPrivate?false:true,
         createdAt: new Date(),
         _id: new mongoose.Types.ObjectId() // assign fresh ID NOW
     };
@@ -121,11 +121,11 @@ export const sendFollow = async (req: Request) => {
 
 
 export const acceptRequest = async (req: Request) => {
-    const targetId:string = req.identity;     // jisko request aayi
-    const requesterId:string = req.body.userId     // jisne request bheji
-    const notificationId :string = req.body.notificationId
-    console.log("notificationId",notificationId);
-    
+    const targetId: string = req.identity;     // jisko request aayi
+    const requesterId: string = req.body.userId     // jisne request bheji
+    const notificationId: string = req.body.notificationId
+    console.log("notificationId", notificationId);
+
     const follow = await Collections.FollowModel.findOne({
         follower: requesterId,
         following: targetId,
@@ -149,32 +149,48 @@ export const acceptRequest = async (req: Request) => {
     );
 
     const noti = await Collections.NotificationModel.findOneAndUpdate(
-  {
-    user: targetId,
-    "notifications._id": new mongoose.Types.ObjectId(notificationId),
-  },
-  {
-    $set: {
-      "notifications.$.type": "follow",
-    },
-  },
-  { new: true }
-);
+        {
+            user: targetId,
+            "notifications._id": new mongoose.Types.ObjectId(notificationId),
+        },
+        {
+            $set: {
+                "notifications.$.type": "follow",
+            },
+        },
+        { new: true }
+    );
 
-console.log("updated noti", noti);
+    console.log("updated noti", noti);
 
     return follow
 }
 
 export const rejectRequest = async (req: Request) => {
     const targetId = req.identity;
-    const requesterId = req.params.id;
+    const requesterId = req.body.userId;
+    const notificationId: string = req.body.notificationId
 
     const follow = await Collections.FollowModel.findOneAndDelete({
         follower: requesterId,
         following: targetId,
         status: "requested"
     });
+
+    await Collections.NotificationModel.findOneAndUpdate(
+        {
+            user: targetId,
+            "notifications._id": notificationId,
+        },
+        {
+            $pull: {
+                notifications: { _id: notificationId },
+            },
+        },
+        { new: true }
+    );
+
+
 
     if (!follow) throw new ApiError(400, "No follow request found");
 

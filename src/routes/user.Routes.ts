@@ -17,6 +17,9 @@ UserRoute.route("/updateProfile").put(userController.UpdateProfile);
 UserRoute.route("/:query").post(userController.SearchQuery)
 
 UserRoute.route("/:roomId").get(userController.GetUser)
+
+UserRoute.route("/privacy/:userId").post(userController.AccountPrivacy)
+
 export { UserRoute };
 
 

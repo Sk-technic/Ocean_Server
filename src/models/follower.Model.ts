@@ -18,7 +18,7 @@ const FollowSchema = new mongoose.Schema(
 
     status: {
       type: String,
-      enum: ["requested", "accepted", "blocked"],
+      enum: ["rejected","requested", "accepted", "blocked"],
       default: "accepted"
     },
 
