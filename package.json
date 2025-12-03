@@ -7,7 +7,7 @@
     "test": "echo \"Error: no test specified\" && exit 1",
     "dev": "nodemon",
     "build": "tsc",
-    "start": "node src/main.ts",
+    "start": "node dist/main.js",
     "prepare": "husky install"
   },
   "author": "",

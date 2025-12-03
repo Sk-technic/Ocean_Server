@@ -8,7 +8,6 @@ import { errorHandler } from './middlewares/errorHandler.middleware';
 import cookieParser from 'cookie-parser';
 import router from "./routes";
 import { authMiddleware } from './middlewares/auth.middleware';
-import fileUpload from 'express-fileupload';
 const app: Application = express();
 
 app.use(helmet());
