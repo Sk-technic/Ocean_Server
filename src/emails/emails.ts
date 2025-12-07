@@ -2,8 +2,7 @@ import { IFORGETPASSWORD, IPASSWORDCONF, IRECOVERYEMAIL, ISENDOTP } from "../int
 import { sendEmail } from "../utils/smtp";
 
 export const SentOtpToMail = async (params: ISENDOTP) => {
-  const { to, Token } = params;
-  const TO = to!.toString();
+  const { to, Token,Name } = params;
   const subject = 'Your One-Time Password (OTP) Token';
   
   const body = `
@@ -51,7 +50,7 @@ export const SentOtpToMail = async (params: ISENDOTP) => {
             <tr>
               <td align="center" style="padding: 0 40px 20px 40px;">
                 <p style="font-size: 16px; color: #6b6b6b; line-height: 1.7; margin:5px 0px;">
-                  Hi ${params?.Name || "there"} 👋<br>
+                  Hi ${Name || "there"} 👋<br>
                   Thanks for joining <strong>Younite</strong>!<br><br>
                   To finish setting up your account, please verify your email address.  
                   Once confirmed, you’ll be ready to explore everything we have to offer.
@@ -112,10 +111,9 @@ export const SentOtpToMail = async (params: ISENDOTP) => {
   </body>
 </html>
 
-
   `;
 
-  await sendEmail(TO, subject, body);
+  await sendEmail(to, subject, body);
 };
 
 

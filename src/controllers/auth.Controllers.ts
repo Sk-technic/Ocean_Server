@@ -33,21 +33,9 @@ export const RefreshAccessToken = asyncHandler(async (req: Request, res: Respons
         .json(new ApiResponse(200, result, "AccessToken Refreshed."))
 })
 
-export const googleAuth = asyncHandler(async (req: Request, res: Response) => {
-    const result = await authService.googleAuth(req)
-    const options = {
-        httpOnly: true,
-        secure: true
-    }
-    return res.status(200)
-        .cookie("accessToken", result?.accessToken, options)
-        .cookie("refreshToken", result?.refreshToken, options)
-        .json(new ApiResponse(200, result, "Login Successfull."))
-})
-
 export const resetPassword = asyncHandler(async (req: Request, res: Response) => {
-    const result = await authService.resetPassword(req);
-    return res.status(200).json(new ApiResponse(200, result, "Reset Password Successfully"))
+    // const result = await authService.resetPassword(req);
+    return res.status(200).json(new ApiResponse(200, [], "Reset Password Successfully"))
 })
 
 export const sendForgetPasswordMail = asyncHandler(async (req: Request, res: Response) => {
@@ -72,15 +60,22 @@ export const autoLogin = asyncHandler(async (req: Request, res: Response) => {
         );
 });
 
-export const verifyEmail = asyncHandler(async (req: Request, res: Response) => {
-    const result = await authService.verifyEmail(req);
+export const verifyOtp = asyncHandler(async (req: Request, res: Response) => {
+    const result = await authService.verifyOtp(req);
     return res.status(200).json(
         new ApiResponse(200, result, "Your Email is now verified")
     );
 })
 
+export const resendOTP = asyncHandler(async (req:Request,res:Response) => {
+    await authService.resendOtp(req)
+    return res.status(200).json(
+        new ApiResponse(200, [], "OTP resend successfully")
+    );
+})
+
 export const sendEmailVerification = asyncHandler(async (req: Request, res: Response) => {
-    const result = await authService.sendEmailVerification(req);
+    // const result = await authService.sendEmailVerification(req);
     return res.status(200).json(
         new ApiResponse(200, [], "Verification token sent to your email.")
     );
@@ -97,5 +92,20 @@ export const getUser = asyncHandler(async (req: Request, res: Response) => {
     const result = await authService.getUser(req)
     return res.status(200).json(
         new ApiResponse(200, result, "fetched.")
+    );
+})
+
+export const googleAuth = asyncHandler( async(req:Request,res:Response) => {
+    const result = await authService.googleAuth(req)
+    return res.status(200).json(
+        new ApiResponse(200, result, "Google Authenticated.")
+    );
+})
+
+export const googleCallback = asyncHandler( async(req:Request,res:Response) => {
+    const result = await authService.googleCallback(req)
+    res.redirect(result)
+    return res.status(200).json(
+        new ApiResponse(200, result, "Google success.")
     );
 })

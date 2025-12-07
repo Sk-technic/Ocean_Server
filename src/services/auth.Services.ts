@@ -1,17 +1,18 @@
 import { FileDictionary } from "interfaces/files.interface";
 import { Collections } from "../models";
 import { ApiError } from "../utils/ApiError"
-import { Request, Response } from "express";
+import { Request } from "express";
 import { uploadToCloudinary } from "../utils/cloudinary";
 import { generateAccessAndRefreshToken } from "../utils/generateJwt";
 import Jwt, { Secret, JwtPayload } from "jsonwebtoken";
 import { forgetPasswordMail, SentOtpToMail, SentRecoveryEmail, updatePasswordConfirmation } from "../emails/emails"
-import { OAuth2Client } from "google-auth-library";
 import { validatePassword } from "../utils/passwordValidator";
 import { validateEmail } from "../utils/verifyEmail";
-import { generateToken, verifyToken } from "../utils/createToken";
+import { generateToken } from "../utils/createToken";
 import { RedisHelpers } from "../utils/redisHelper";
-import type{ Server } from "socket.io";
+import type { Server } from "socket.io";
+import { generateOTP } from "../utils/generateOtp";
+import passport from "passport";
 
 export const signup = async (data: Request) => {
 
@@ -46,7 +47,7 @@ export const signup = async (data: Request) => {
 
   const files = data.files;
 
-const typedFiles = (data.files ?? {}) as FileDictionary;
+  const typedFiles = (data.files ?? {}) as FileDictionary;
 
   let profilePicPath = null;
 
@@ -56,9 +57,9 @@ const typedFiles = (data.files ?? {}) as FileDictionary;
 
   let profile;
 
-    if (profilePicPath != null) {
-      profile = await uploadToCloudinary(profilePicPath)
-    }
+  if (profilePicPath != null) {
+    profile = await uploadToCloudinary(profilePicPath)
+  }
   const newUser = {
     fullName: firstName + " " + lastName,
     firstName,
@@ -77,8 +78,24 @@ const typedFiles = (data.files ?? {}) as FileDictionary;
   if (!createUser) {
     throw new ApiError(400, "something wents wrong while user signup")
   }
-  return createUser?.fullName;
-}
+  let token
+  if (createUser) {
+    token = generateOTP()
+    await RedisHelpers.setOtp(createUser.email, token)
+  }
+
+  const verificationPayload = {
+    to: createUser.email!,
+    Name: createUser.fullName,
+    Token: Number(token)
+  }
+
+  if (createUser) {
+    await SentOtpToMail(verificationPayload)
+  }
+
+  return createUser?._id.toString();
+};
 
 export const signIn = async (req: Request) => {
   const { email, password, username } = req.body;
@@ -107,15 +124,14 @@ export const signIn = async (req: Request) => {
   user.lastActive = null;
   await user.save();
 
-  const loggedIn = await Collections.UserModel.findById(user._id)
-    .select("-passwordHash -refreshToken");
+  const loggedIn = await Collections.UserModel.findById(user._id).select("-passwordHash -refreshToken");
 
   return { accessToken, refreshToken, loggedIn };
 };
 
 export const logout = async (req: Request, io?: Server) => {
   try {
-    const userId = req.identity; 
+    const userId = req.identity;
     if (!userId) throw new Error("User identity missing");
 
     await Collections.UserModel.findByIdAndUpdate(
@@ -149,7 +165,7 @@ export const logout = async (req: Request, io?: Server) => {
 };
 
 export const RefreshAccessToken = async (req: Request): Promise<{ accessToken: string; refreshToken: string }> => {
-  const {token} = req.body;
+  const { token } = req.body;
   if (!token) throw new ApiError(401, "No refresh token provided");
 
   const secret = process.env.JWT_REFRESH_SECRET as Secret;
@@ -175,45 +191,6 @@ export const RefreshAccessToken = async (req: Request): Promise<{ accessToken: s
   await user.save();
 
   return { accessToken, refreshToken };
-};
-
-
-export const googleAuth = async (req: Request): Promise<{ accessToken: string; refreshToken: string }> => {
-  const client = new OAuth2Client(process.env.GOOGLE_CLIENT_ID);
-
-  const { token } = req.body;
-
-  const ticket = await client.verifyIdToken({
-    idToken: token,
-    audience: process.env.GOOGLE_CLIENT_ID,
-  });
-
-  const payload = ticket.getPayload();
-  if (!payload) throw new ApiError(400, "Google auth failed");
-
-  const { sub, email, given_name, family_name } = payload;
-
-  let user = await Collections.UserModel.findOne({ email, isDeleted: false });
-
-  if (user) {
-    // Link googleId if not linked
-    if (!user.googleId) {
-      user.googleId = sub;
-      await user.save();
-    }
-  } else {
-    user = await Collections.UserModel.create({
-      firstname: given_name,
-      lastname: family_name,
-      email,
-      googleId: sub,
-    });
-  }
-
-  const { accessToken, refreshToken } = await generateAccessAndRefreshToken(user?._id)
-
-  return { accessToken, refreshToken }
-
 };
 
 export const addRecoveryEmail = async (req: Request): Promise<boolean> => {
@@ -246,86 +223,81 @@ export const addRecoveryEmail = async (req: Request): Promise<boolean> => {
 };
 
 export const autoLogin = async (req: Request) => {
-  const refreshToken: string = req.cookies?.refreshToken || req.body
-  if (!refreshToken) throw new ApiError(401, "Refresh token is required");
+  const { id } = req.body
 
-  let payload: any;
-  try {
-    payload = Jwt.verify(refreshToken, process.env.JWT_REFRESH_SECRET as Secret);
-  } catch (err) {
-    throw new ApiError(401, "Invalid or expired refresh token");
-  }
+  if (!id) throw new ApiError(401, "id not provided");
 
   const user = await Collections.UserModel.findOne({
-    _id: payload._id,
+    _id: id,
     isDeleted: false
-  });
+  }).select("-passwordHash -refreshToken")
 
   if (!user) throw new ApiError(404, "User not found");
 
-  if (user.refreshToken !== refreshToken) {
-    throw new ApiError(401, "Refresh token does not match");
-  }
+  const { accessToken, refreshToken } = await generateAccessAndRefreshToken(id)
 
-  // Generate a new access token
-  const newAccessToken = user.generateAccessToken();
-
-  return { user, accessToken: newAccessToken };
-  //redirect to dashBoard from clientSide
+  return { loggedIn: user, accessToken: accessToken, refreshToken: refreshToken };
 };
 
-export const sendEmailVerification = async (req: Request) => {
+// export const sendEmailVerification = async (req: Request) => {
 
-  const user = await Collections.UserModel.findOne({ email: req?.User?.email, isDeleted: false })
+//   const user = await Collections.UserModel.findOne({ email: req?.User?.email, isDeleted: false })
 
-  if (!user) throw new ApiError(400, "Unauthorized");
-  if (user?.isemailVerified) throw new ApiError(400, "your email is verified.")
+//   if (!user) throw new ApiError(400, "Unauthorized");
+//   if (user?.isemailVerified) throw new ApiError(400, "your email is verified.")
 
-  const { rawToken, hashedToken } = await generateToken(8)
+//   const { rawToken, hashedToken } = await generateToken(8)
 
-  const tokenuser = await Collections.UserModel.findOneAndUpdate({
-    email: req?.User?.email,
-    isDeleted: false
-  }, {
-    $set: {
-      Token: hashedToken,
-      TokenExpiry: Date.now() + 5 * 60 * 1000
-    }
-  }, {
-    new: true
-  })
-  const payload = {
-    to: tokenuser!.email,
-    Token: rawToken,
-    Name: tokenuser!.firstName
-  }
+//   const tokenuser = await Collections.UserModel.findOneAndUpdate({
+//     email: req?.User?.email,
+//     isDeleted: false
+//   }, {
+//     $set: {
+//       Token: hashedToken,
+//       TokenExpiry: Date.now() + 5 * 60 * 1000
+//     }
+//   }, {
+//     new: true
+//   })
+//   const payload = {
+//     to: tokenuser?.email,
+//     Token: rawToken,
+//     Name: tokenuser?.firstName
+//   }
 
-  await SentOtpToMail(payload)
+//   await SentOtpToMail(payload)
 
-}
+// }
 
-export const verifyEmail = async (req: Request) => {
-  const { token } = req.body;
+export const verifyOtp = async (req: Request) => {
+  const { token, userId } = req.body;
 
-  const user = await Collections.UserModel.findOne({ _id: req.identity, isDeleted: false });
+  const user = await Collections.UserModel.findById(userId);
+
   if (!user) throw new ApiError(404, "User not found");
 
-  const CorrectToken = await verifyToken(token, user!.Token, user?.TokenExpiry);
-  if (!CorrectToken) throw new ApiError(400, "Invalid or expired token");
+  if (!token) throw new ApiError(400, "otp not found.");
 
-  const result = await Collections.UserModel.findOneAndUpdate(
-    { email: req.User.email, isDeleted: false },
+  const emailExist = await RedisHelpers.getOtp(user?.email)
+  if (!emailExist) throw new ApiError(400, "OTP expired or not found")
+
+  const otpVerified = await RedisHelpers.verifyOtp({ email: user.email, submittedOtp: token })
+
+  if (!otpVerified) {
+    throw new ApiError(400, "Invalid OTP");
+  }
+
+  const verifiedUser = await Collections.UserModel.findByIdAndUpdate(
+    userId,
     {
-      $set: {
-        isemailVerified: true,
-        Token: null,
-        TokenExpiry: null
-      }
+      isVerified: true,
+      isOtpVerified: true
     },
     { new: true }
   ).select("-passwordHash -refreshToken -isDeleted");
 
-  return result;
+  await RedisHelpers.deleteOtp(verifiedUser!.email)
+  return verifiedUser?._id;
 };
 
 export const sendForgetPasswordMail = async (req: Request) => {
@@ -341,45 +313,45 @@ export const sendForgetPasswordMail = async (req: Request) => {
   return info;
 }
 
-export const resetPassword = async (req: Request): Promise<boolean> => {
-  const { email, token, newPassword } = req.body;
+// export const resetPassword = async (req: Request): Promise<boolean> => {
+//   const { email, token, newPassword } = req.body;
 
-  // Validate fields separately
-  if (!email) throw new ApiError(400, "Email is required.");
-  if (!token) throw new ApiError(400, "Reset token is required.");
-  if (!newPassword) throw new ApiError(400, "New password is required.");
+//   // Validate fields separately
+//   if (!email) throw new ApiError(400, "Email is required.");
+//   if (!token) throw new ApiError(400, "Reset token is required.");
+//   if (!newPassword) throw new ApiError(400, "New password is required.");
 
-  // Find user
-  const user = await Collections.UserModel.findOne({ email, isDeleted: false });
-  if (!user) throw new ApiError(404, "User not found.");
+//   // Find user
+//   const user = await Collections.UserModel.findOne({ email, isDeleted: false });
+//   if (!user) throw new ApiError(404, "User not found.");
 
-  // Validate token
-  const isValid = await verifyToken(token, user.Token, user.TokenExpiry);
-  if (!isValid) {
-    throw new ApiError(
-      400,
-      "This reset link is invalid or has expired. Please request a new one."
-    );
-  }
+//   // Validate token
+//   const isValid = await verifyToken(token, user.Token, user.TokenExpiry);
+//   if (!isValid) {
+//     throw new ApiError(
+//       400,
+//       "This reset link is invalid or has expired. Please request a new one."
+//     );
+//   }
 
-  const verifyPassword = validatePassword(newPassword);
-  if (!verifyPassword.valid) {
-    throw new ApiError(400, verifyPassword.message!);
-  }    // Update password (pre-hook will hash it)
-  user.passwordHash = newPassword;
-  user.Token = null;
-  user.TokenExpiry = null;
+//   const verifyPassword = validatePassword(newPassword);
+//   if (!verifyPassword.valid) {
+//     throw new ApiError(400, verifyPassword.message!);
+//   }    // Update password (pre-hook will hash it)
+//   user.passwordHash = newPassword;
+//   user.Token = null;
+//   user.TokenExpiry = null;
 
-  const payload = {
-    email: user?.email!,
-    Name: user?.fullName!
-  }
-  await updatePasswordConfirmation(payload)
+//   const payload = {
+//     email: user?.email!,
+//     Name: user?.fullName!
+//   }
+//   await updatePasswordConfirmation(payload)
 
-  await user.save();
+//   await user.save();
 
-  return true;
-}
+//   return true;
+// }
 
 export const changePassword = async (req: Request): Promise<boolean> => {
   const { newPassword, password } = req.body;
@@ -417,13 +389,49 @@ export const getUser = async (req: Request) => {
      -Token 
      -TokenExpiry 
      -isDeleted 
-     -googleId      
      -createdAt
      -otpExpiry
      -__v
      `);
-     
+
   if (!user) throw new ApiError(400, "unauthorized");
 
   return user
+}
+
+export const googleAuth = passport.authenticate("google", {
+  scope: ["profile", "email"],
+});
+
+export const resendOtp = async (req: Request) => {
+  const { id } = req.body;
+
+  const user = await Collections.UserModel.findById(id)
+
+  if (!user) throw new ApiError(400, "user not found");
+
+  const token = generateOTP()
+
+  if (token) {
+    await RedisHelpers.setOtp(user.email, token)
+  }
+
+  const verificationPayload = {
+    to: user.email!,
+    Name: user.fullName,
+    Token: Number(token)
+  }
+
+  await SentOtpToMail(verificationPayload)
+
+}
+
+export const googleCallback = async (req: Request) => {
+  const googleUser = (req?.user as any)?._id;
+  if (!googleUser) throw new ApiError(400, "google user not found");
+  const userId = googleUser;
+  const { accessToken, refreshToken } = await generateAccessAndRefreshToken(userId);
+
+  const redirectURL = `${process.env.CLIENT_URI}/auth/success?accessToken=${accessToken}&refreshToken=${refreshToken}&id=${userId}`;
+  return redirectURL;
 }

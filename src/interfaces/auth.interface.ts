@@ -1,7 +1,7 @@
 export interface ISENDOTP {
-        Token:string;
-        to:string | null | undefined;
-        Name:string
+        Token:Number;
+        to:string;
+        Name:string;
 }
 
 export interface IRECOVERYEMAIL {

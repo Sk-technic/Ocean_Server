@@ -1,14 +1,12 @@
-import { ApiError } from "../utils/ApiError";
 
-export function generateOTP(length: number): number {
-    if(length > 6){
-        throw new ApiError(400,"Maximum 6 digit otp is valid")
-    }
+export function generateOTP(): string {  
+
+  const Length:number = 6
 
   let otp = '';
-  for (let i = 0; i < length; i++) {
+  for (let i = 0; i < Length; i++) {
     otp += Math.floor(Math.random() * 10).toString();
   }
-  return Number(otp);
+  return String(otp);
 
 }

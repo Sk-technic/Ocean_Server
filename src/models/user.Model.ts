@@ -15,7 +15,7 @@ const userSchema = new Schema<IUser>({
     fullName: { type: String, required: true, trim: true },
     firstName: { type: String, required: true, lowercase: true },
     lastName: { type: String, required: true, lowercase: true },
-    email: { type: String, unique: true, default: null },
+    email: { type: String, unique: true},
     recoveryEmail: {
         type: String,
         unique: true,
@@ -23,7 +23,7 @@ const userSchema = new Schema<IUser>({
     },
     isDeleted: { type: Boolean, default: false },
     phone: { type: String, default: null },
-    passwordHash: { type: String, required: true },
+    passwordHash: { type: String, default:null },
     isPrivate:{ type:Boolean, default:false },
     profilePic: { type: String, default: null },
     bio: { type: String, default: '' },
@@ -57,27 +57,15 @@ const userSchema = new Schema<IUser>({
         type:Date,
         default:null
     },
-    otp: {
-        type: String,
-        default: ''
-    },
-    Token: {
-        type: String,
-        default: null
-    },
-    otpExpiry: {
-        type: Date,
-        default: null
-    },
-    TokenExpiry: {
-        type: Date,
-        default: null
+    isOtpVerified:{
+        type: Boolean,
+        default:false
     },
     refreshToken: {
         type: String,
         default: null
     },
-    googleId: {
+    GoogleId: {
         type: String,
         default: null
     },
@@ -116,7 +104,9 @@ const userSchema = new Schema<IUser>({
 
 userSchema.pre("save", async function (next) {
     if (!this.isModified("passwordHash")) return next();
-    this.passwordHash = await bcrypt.hash(this.passwordHash, 10)
+    if(this.passwordHash){
+        this.passwordHash = await bcrypt.hash(this?.passwordHash, 10)
+    }
     next();
 })
 userSchema.methods.isPasswordCorrect = async function (password: string) {

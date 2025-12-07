@@ -1,7 +1,8 @@
 import { userService } from "../services";
 import { redisClient } from "../config/redis";
 import type { Server } from "socket.io";
-
+import crypto from "crypto";
+import { CryptoUtil } from "./crypto";
 function safeParse<T>(data: string | null): T | null {
   try {
     return data ? JSON.parse(data) : null;
@@ -17,7 +18,7 @@ export const TTL = {
 };
 
 export const RedisHelpers = {
-  /** 🧠 USER AUTH CACHE */
+
   async setUser(userId: string, userData: any, ttlSeconds = TTL.USER) {
     const key = `cached:user:${userId}`;
     await redisClient.setEx(key, ttlSeconds, JSON.stringify(userData));
@@ -28,7 +29,6 @@ export const RedisHelpers = {
     return safeParse(await redisClient.get(key));
   },
 
-  /** ⚡ USER PRESENCE MANAGEMENT */
   async setUserOnline(userId: string, io: Server) {
     const key = `user:presence:${userId}`;
     const now = Date.now().toString();
@@ -193,5 +193,58 @@ export const RedisHelpers = {
   async delPattern(pattern: string) {
     const keys = await redisClient.keys(pattern);
     if (keys.length) await redisClient.del(keys);
+  },
+
+  async setOtp(email: string, otp: string) {
+    const key = `otp:${email}`;
+    const salt = crypto.randomBytes(16).toString("hex");
+    const hashed = crypto
+      .createHmac("sha256", salt)
+      .update(otp)
+      .digest("hex");
+
+    const encryptedData = CryptoUtil.encrypt(
+      JSON.stringify({ hashed, salt })
+    );
+
+    // Save for 10 minutes (600 seconds)
+    await redisClient.setEx(key, 50, encryptedData);
+
+    return true;
+  },
+
+  async getOtp(email: string) {
+    const key = `otp:${email}`;
+    const encrypted = await redisClient.get(key);
+    if (!encrypted) return null;
+
+    const decrypted = CryptoUtil.decrypt(encrypted);
+
+    return safeParse<{ hashed: string; salt: string }>(decrypted);
+  },
+
+  async verifyOtp({ email, submittedOtp }: { email: string, submittedOtp: string }) {
+    const key = `otp:${email}`;
+    const encrypted = await redisClient.get(key);
+    if (!encrypted) return false;
+    const stored = safeParse<{ hashed: string; salt: string }>(
+      CryptoUtil.decrypt(encrypted)
+    );
+
+    if (!stored) return false;
+
+    const submittedHash = crypto
+      .createHmac("sha256", stored.salt)
+      .update(submittedOtp)
+      .digest("hex");
+
+    if (submittedHash !== stored.hashed) return false;
+
+    await redisClient.del(key);
+    return true;
+  },
+
+  async deleteOtp(email: string) {
+    await redisClient.del(`otp:${email}`);
   },
 };

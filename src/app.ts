@@ -8,6 +8,7 @@ import { errorHandler } from './middlewares/errorHandler.middleware';
 import cookieParser from 'cookie-parser';
 import router from "./routes";
 import { authMiddleware } from './middlewares/auth.middleware';
+import passport from './config/passport'
 const app: Application = express();
 
 app.use(helmet());
@@ -30,6 +31,8 @@ app.use(express.static(path.join(__dirname, 'public')));
 app.use(cookieParser());
 
 app.use(authMiddleware)
+app.use(passport.initialize());
+
 app.get('/api/v1', (_, res: Response) => res.json({ success: true, message: 'API is running' }));
 
 app.all('', (_, res: Response) => {

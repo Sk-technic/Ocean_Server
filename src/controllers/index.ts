@@ -1,4 +1,4 @@
-import { addRecoveryEmail, autoLogin, changePassword, getUser, googleAuth, logout, RefreshAccessToken, resetPassword, sendEmailVerification, sendForgetPasswordMail, signIn, signup, verifyEmail } from "./auth.Controllers";
+import { addRecoveryEmail, autoLogin, changePassword, getUser, googleAuth, googleCallback, logout, RefreshAccessToken, resendOTP, resetPassword, sendEmailVerification, sendForgetPasswordMail, signIn, signup, verifyOtp } from "./auth.Controllers";
 import { GetMessages, GetChatUsers, getRoomDetails, SendMedia } from "./chat.Controllers";
 import { AcceptRequest, BlockUser, followRequest, RequestReject, UnBlockUser, UnFollowUser } from "./follower.Controllers";
 import { GetNotifications } from "./notifications.Controllers";
@@ -14,10 +14,12 @@ export const authController = {
     addRecoveryEmail,
     autoLogin,
     sendEmailVerification,
-    verifyEmail,
+    verifyOtp,
     sendForgetPasswordMail,
     changePassword,
-    getUser
+    getUser,
+    resendOTP,
+    googleCallback
 }
 
 export const userController = {

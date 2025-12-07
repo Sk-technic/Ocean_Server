@@ -1,4 +1,4 @@
-import { addRecoveryEmail, autoLogin, changePassword, getUser, googleAuth, logout, RefreshAccessToken, resetPassword, sendEmailVerification, sendForgetPasswordMail, signIn, signup, verifyEmail, } from "./auth.Services";
+import { addRecoveryEmail, autoLogin, changePassword, getUser, googleAuth, googleCallback, logout, RefreshAccessToken, resendOtp, sendForgetPasswordMail, signIn, signup, verifyOtp, } from "./auth.Services";
 import { createSingleRoom, editMessage, getMessages, sendMedia, GetRoomDetails, unsendMessage, clearChat, chatRooms, sendMessage, readChat, MessageSeenUpdate, acceptMessageRequest } from "./chat.Services";
 import { acceptRequest, blockUser, rejectRequest, sendFollow, unblockUser, unfollowUser } from "./follower.Service";
 import { getNotifications } from "./notifications";
@@ -10,14 +10,16 @@ export const authService = {
     logout,
     RefreshAccessToken,
     googleAuth,
-    resetPassword,
+    // resetPassword,
     addRecoveryEmail,
     autoLogin,
-    sendEmailVerification,
-    verifyEmail,
+    // sendEmailVerification,
+    verifyOtp,
     sendForgetPasswordMail,
     changePassword,
-    getUser
+    getUser,
+    resendOtp,
+    googleCallback
 }
 export const userService = {
     EditCoverImage,

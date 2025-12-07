@@ -1,7 +1,9 @@
 import { authController } from "../controllers";
-import { Request, Response, Router } from "express";
+import { Router } from "express";
 import { uploadImage } from "../middlewares/multer.middleware";
-import { resetPasswordRateLimiter } from "../utils/rateLimiter";
+import { resendOtpRateLimiter, resetPasswordRateLimiter } from "../utils/rateLimiter";
+import { authService } from "../services";
+import passport from "passport";
 
 const AuthRoute = Router();
 
@@ -39,11 +41,19 @@ AuthRoute.route("/logout").post(authController.logout);
 AuthRoute.route("/refreshAccessToken").post(authController.RefreshAccessToken);
 
 /**
- * @route   POST /googleAuth
- * @desc    Authenticate or register user via Google OAuth
+ * @route   POST /google
+ * @desc    Authenticate user via Google OAuth
  * @access  Public
  */
-AuthRoute.route("/googleAuth").post(authController.googleAuth);
+AuthRoute.route("/google").get(passport.authenticate("google", {scope: ["profile", "email"], session: false }));
+
+
+/**
+ * @route   POST /google/Callback
+ * @desc    Authenticate or register user
+ * @access  Public
+ */
+AuthRoute.route("/google/callback").get(passport.authenticate("google", { session: false }),authController.googleCallback);
 
 /**
  * @route   POST /add-RecoveryEmail
@@ -57,7 +67,15 @@ AuthRoute.route("/add-RecoveryEmail").post(authController.addRecoveryEmail);
  * @desc    Automatically log in user (token-based or session check)
  * @access  Public
  */
-AuthRoute.route("/auto-Login").post(authController.autoLogin);
+AuthRoute.route("/auto-login").post(authController.autoLogin);
+
+/**
+ * @route   POST /resend-otp
+ * @desc    Automatically log in user (token-based or session check)
+ * @access  Public
+ */
+AuthRoute.route("/resendOTP").post(resendOtpRateLimiter,authController.resendOTP);
+
 
 /**
  * @route   POST /send-emailVarification
@@ -71,7 +89,7 @@ AuthRoute.route("/send-emailVarification").post(authController.sendEmailVerifica
  * @desc    Verify user’s email address using the verification code/link
  * @access  Public
  */
-AuthRoute.route("/verifyEmail").post(authController.verifyEmail);
+AuthRoute.route("/verify-otp").post(authController.verifyOtp);
 
 /**
  * @route   POST /forget-PasswordMail
@@ -108,8 +126,5 @@ AuthRoute.route("/change-password").patch(
 AuthRoute.route("/me").get(
     authController.getUser
 );
-
-// Example placeholder for phone verification (future enhancement)
-// AuthRoute.route("/verifyPhone"); // verify with third-party service (e.g., Twilio)
 
 export { AuthRoute };

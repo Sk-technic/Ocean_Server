@@ -6,18 +6,15 @@ export interface IUser extends Document {
     fullName: string;
     firstName: string;
     lastName: string;
-    email?: string | null;
+    email: string;
     isDeleted: boolean;
     phone?: String | null;
-    passwordHash: string;  // renaming for clarity
+    passwordHash: string | null;  // renaming for clarity
     isPrivate:boolean;
     profilePic?: string;
     bio?: string;
     isActive?: 'online' | 'offline' | 'away';
-    otp?: string;
-    otpExpiry?:Date | null
-    Token?: string | null;
-    TokenExpiry?:Date | null
+    isOtpVerified:boolean;
     coverImage?: string;
     status: 'active' | 'banned' | 'suspended';
     lastActive: Date | null;
@@ -31,7 +28,7 @@ export interface IUser extends Document {
     isVerified: boolean;
     isemailVerified: boolean;
     isphoneVerified: boolean;
-    googleId?: String;
+    GoogleId?: String;
     recoveryEmail?:String;
     reelsCount?: number;
     videosCount?: number;

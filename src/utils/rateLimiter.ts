@@ -1,5 +1,6 @@
 import rateLimit, { ipKeyGenerator } from "express-rate-limit";
 import { Collections } from "../models";
+import { ApiResponse } from "./ApiResponse";
 export const resetPasswordRateLimiter = rateLimit({
   windowMs: 15 * 60 * 1000, // 15 minutes
   max: 5,
@@ -28,4 +29,21 @@ export const resetPasswordRateLimiter = rateLimit({
     }
     return res.status(options.statusCode || 429).json(options.message);
   },
+});
+
+export const resendOtpRateLimiter = rateLimit({
+  windowMs: 10 * 60 * 1000, // 10 minutes
+  max: 3, // allow only 3 resend attempts per IP + email
+  keyGenerator: (req, res) => {
+    const safeIp = req.ip ? ipKeyGenerator(req.ip) : "unknown-ip";
+    return safeIp + "-" + (req.body?.email || "unknown");
+  },
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: {
+    success: false,
+    statusCode: 429,
+    message: "Too many OTP resend attempts. Please try again after 10 minutes.",
+  },
+
 });
