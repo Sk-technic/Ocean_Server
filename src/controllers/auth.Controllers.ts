@@ -34,15 +34,8 @@ export const RefreshAccessToken = asyncHandler(async (req: Request, res: Respons
 })
 
 export const resetPassword = asyncHandler(async (req: Request, res: Response) => {
-    // const result = await authService.resetPassword(req);
+    const result = await authService.resetPassword(req);
     return res.status(200).json(new ApiResponse(200, [], "Reset Password Successfully"))
-})
-
-export const sendForgetPasswordMail = asyncHandler(async (req: Request, res: Response) => {
-    const result = await authService.sendForgetPasswordMail(req);
-    return res.status(200).json(
-        new ApiResponse(200, [], "Password reset email has been sent successfully.")
-    );
 })
 
 export const addRecoveryEmail = asyncHandler(async (req: Request, res: Response) => {
@@ -75,9 +68,9 @@ export const resendOTP = asyncHandler(async (req:Request,res:Response) => {
 })
 
 export const sendEmailVerification = asyncHandler(async (req: Request, res: Response) => {
-    // const result = await authService.sendEmailVerification(req);
+    const result = await authService.sendEmailVerification(req);
     return res.status(200).json(
-        new ApiResponse(200, [], "Verification token sent to your email.")
+        new ApiResponse(200,result, "Verification token sent to your email.")
     );
 })
 

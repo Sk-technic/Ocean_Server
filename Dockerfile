@@ -18,4 +18,4 @@ RUN npm run build
 EXPOSE 5000
 
 # Step 7: Start app
-CMD ["npm", "start"]
+CMD ["npm", "src/main.ts"]

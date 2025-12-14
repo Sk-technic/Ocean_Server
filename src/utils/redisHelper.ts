@@ -195,23 +195,25 @@ export const RedisHelpers = {
     if (keys.length) await redisClient.del(keys);
   },
 
-  async setOtp(email: string, otp: string) {
-    const key = `otp:${email}`;
-    const salt = crypto.randomBytes(16).toString("hex");
-    const hashed = crypto
-      .createHmac("sha256", salt)
-      .update(otp)
-      .digest("hex");
+async setOtp(email: string, otp: string, expiryInSec: number = 50) {
+  const key = `otp:${email}`;
 
-    const encryptedData = CryptoUtil.encrypt(
-      JSON.stringify({ hashed, salt })
-    );
+  const salt = crypto.randomBytes(16).toString("hex");
+  const hashed = crypto
+    .createHmac("sha256", salt)
+    .update(otp)
+    .digest("hex");
 
-    // Save for 10 minutes (600 seconds)
-    await redisClient.setEx(key, 50, encryptedData);
+  const encryptedData = CryptoUtil.encrypt(
+    JSON.stringify({ hashed, salt })
+  );
 
-    return true;
-  },
+  // ⏳ Dynamic expiry (default fallback = 50 seconds)
+  await redisClient.setEx(key, expiryInSec, encryptedData);
+
+  return true;
+},
+
 
   async getOtp(email: string) {
     const key = `otp:${email}`;

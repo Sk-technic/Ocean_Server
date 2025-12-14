@@ -102,8 +102,6 @@ export const DeleteCoverImage = async (req: Request) => {
 
 };
 
-
-
 const allowedPlatforms = ["instagram", "facebook", "discord", "twitter", "youtube", "threads", "telegram"];
 
 // Regular expressions for each platform
@@ -291,8 +289,10 @@ export const SearchQuery = async (req: Request) => {
         followingCount: 1,
         postCount: 1,
         isVerified: 1,
+        isemailVerified: 1,
         isPrivate: 1,
         relevanceScore: 1,
+        socialLinks:1
       },
     },
 
@@ -459,4 +459,101 @@ export const AccountPrivacy = async (req: Request) => {
     isPrivate: result?.isPrivate
   }
   return updatedUser;
+};
+
+export const BlockUser = async (req: Request) => {
+  const blockedUser = req.params.blockedUser;
+
+  if (!blockedUser) {
+    throw new ApiError(400, "User ID missing.");
+  }
+
+  if (!mongoose.Types.ObjectId.isValid(blockedUser)) {
+    throw new ApiError(400, "Invalid user ID.");
+  }
+
+  if (req.identity.toString() === blockedUser) {
+    throw new ApiError(400, "You cannot block yourself.");
+  }
+
+  const userExists = await Collections.UserModel.exists({
+    _id: blockedUser,
+    isDeleted: false,
+  });
+
+  if (!userExists) {
+    throw new ApiError(404, "User not found.");
+  }
+
+    await Collections.BlockModel.create({
+      blocker: req.identity,
+      blocked: blockedUser,
+    });
+
+    return {
+      message: "User blocked successfully.",
+      alreadyBlocked: false,
+    };
+};
+
+export const GetBlockedUsers = async (req: Request) => {
+  const blockerId = req.identity;
+  const cursor = req.query.cursor as string | undefined;
+  const limit = 8;
+
+  const query: any = {
+    blocker: blockerId,
+  };
+
+  if (cursor && mongoose.Types.ObjectId.isValid(cursor)) {
+    query._id = { $lt: new mongoose.Types.ObjectId(cursor) };
+  }
+
+  const blockedUsers = await Collections.BlockModel.find(query)
+    .sort({ _id: -1 })
+    .limit(limit + 1)
+    .populate({
+      path: "blocked",
+      select: "username fullName profilePic bio",
+    }).select("-__v");
+
+  let nextCursor: string | null = null;
+
+  if (blockedUsers.length > limit) {
+    const nextItem = blockedUsers.pop();
+    nextCursor = nextItem?._id.toString() || null;
+  }
+
+  return {
+    data: blockedUsers,
+    nextCursor,
+  };
+};
+
+export const UnBlockUser = async (req: Request) => {
+  const blockedUser = req.params.blockedUser;
+  const blockerId = req.identity;
+
+  if (!blockerId || !blockedUser) {
+    throw new ApiError(400, "User ID missing.");
+  }
+
+  if (!mongoose.Types.ObjectId.isValid(blockedUser)) {
+    throw new ApiError(400, "Invalid user ID.");
+  }
+
+  if (blockerId.toString() === blockedUser) {
+    throw new ApiError(400, "You cannot unblock yourself.");
+  }
+
+  const result = await Collections.BlockModel.findOneAndDelete({
+    blocker: blockerId,
+    blocked: blockedUser,
+  });
+
+  if (!result) {
+    throw new ApiError(404, "User is not blocked.");
+  }
+
+  return result?.blocked.toString();
 };

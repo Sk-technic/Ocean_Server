@@ -9,3 +9,8 @@ export const GetNotifications = asyncHandler(async (req: Request, res: Response)
     const result = await notificationServices.getNotifications(req)
     res.status(200).json(new ApiResponse(200,result,"notification fetched"));
 });
+
+export const markNotificationsAsRead = asyncHandler(async (req: Request, res: Response) => {
+    const result = await notificationServices.markNotificationsAsRead(req)
+    res.status(200).json(new ApiResponse(200,result,"read all"));
+});

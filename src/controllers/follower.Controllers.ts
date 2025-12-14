@@ -24,12 +24,17 @@ export const UnFollowUser = asyncHandler(async (req:Request,res:Response) => {
     res.status(200).json(new ApiResponse(200, result, `${result && 'unfollowed'}`));
 })
 
-export const BlockUser = asyncHandler(async (req:Request,res:Response) => {
-    const result = await followServices.blockUser(req)
-    res.status(200).json(new ApiResponse(200, result, `user blocked`));
+export const BlockReq = asyncHandler(async (req:Request,res:Response) => {
+    const result = await followServices.blockReq(req)
+    res.status(200).json(new ApiResponse(200, result, `user muted`));
 })
 
-export const UnBlockUser = asyncHandler(async (req:Request,res:Response) => {
-    const result = await followServices.unblockUser(req)
-    res.status(200).json(new ApiResponse(200, result, `user unblock`));
+export const UnBlockReq = asyncHandler(async (req:Request,res:Response) => {
+    const result = await followServices.unblockReq(req)
+    res.status(200).json(new ApiResponse(200, result, `user un mute`));
+})
+
+export const GetMuteUsers = asyncHandler(async (req:Request,res:Response)=>{
+   const result =  await followServices.GetMuteUsers(req)
+    res.status(200).json(new ApiResponse(200, result, `list fetch`));
 })

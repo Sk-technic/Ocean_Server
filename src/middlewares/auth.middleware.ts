@@ -10,17 +10,17 @@ export const authMiddleware = async (
   next: NextFunction
 ) => {
   try {
-    if (unprotechtedRouts.includes(req.path)) {
-      return next();
-    }
+
     const authHeader = req.headers.authorization || '';
     const tokenFromHeader = authHeader.startsWith('Bearer ') ? authHeader.split(' ')[1] : null;
     const token = tokenFromHeader;
 
+    const isUnprotected = unprotechtedRouts.includes(req.path);
+
     if (!token) {
-      throw new ApiError(401, 'Unauthorized: No token provided');
+      if (isUnprotected) return next(); 
+      throw new ApiError(401, "Unauthorized: No token provided");
     }
-    // Verify token with secret from environment variables
     const secret = process.env.JWT_ACCESS_SECRET as Secret;
     if (!secret) {
       throw new Error('JWT_ACCESS_SECRET is not defined in environment variables');

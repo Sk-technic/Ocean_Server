@@ -1,8 +1,8 @@
-import { addRecoveryEmail, autoLogin, changePassword, getUser, googleAuth, googleCallback, logout, RefreshAccessToken, resendOtp, sendForgetPasswordMail, signIn, signup, verifyOtp, } from "./auth.Services";
+import { addRecoveryEmail, autoLogin, changePassword, getUser, googleAuth, googleCallback, logout, RefreshAccessToken, resendOtp, resetPassword, sendEmailVerification, signIn, signup, verifyOtp, } from "./auth.Services";
 import { createSingleRoom, editMessage, getMessages, sendMedia, GetRoomDetails, unsendMessage, clearChat, chatRooms, sendMessage, readChat, MessageSeenUpdate, acceptMessageRequest } from "./chat.Services";
-import { acceptRequest, blockUser, rejectRequest, sendFollow, unblockUser, unfollowUser } from "./follower.Service";
-import { getNotifications } from "./notifications";
-import { DeleteCoverImage, DeleteProfileImage, EditCoverImage, EditProfileImage, SearchQuery, UpdateProfile, GetUser, SetOnline, SetAway, updateLastActive, AccountPrivacy } from "./user.Services";
+import { acceptRequest, blockReq, GetMuteUsers, rejectRequest, sendFollow, unblockReq, unfollowUser } from "./follower.Service";
+import { getNotifications, markNotificationsAsRead } from "./notifications";
+import { DeleteCoverImage, DeleteProfileImage, EditCoverImage, EditProfileImage, SearchQuery, UpdateProfile, GetUser, SetOnline, SetAway, updateLastActive, AccountPrivacy, BlockUser, UnBlockUser, GetBlockedUsers } from "./user.Services";
 
 export const authService = {
     signup,
@@ -10,17 +10,17 @@ export const authService = {
     logout,
     RefreshAccessToken,
     googleAuth,
-    // resetPassword,
+    resetPassword,
     addRecoveryEmail,
     autoLogin,
-    // sendEmailVerification,
+    sendEmailVerification,
     verifyOtp,
-    sendForgetPasswordMail,
     changePassword,
     getUser,
     resendOtp,
     googleCallback
 }
+
 export const userService = {
     EditCoverImage,
     EditProfileImage,
@@ -32,7 +32,10 @@ export const userService = {
     SetOnline,
     updateLastActive,
     SetAway,
-    AccountPrivacy
+    AccountPrivacy,
+    BlockUser,
+    GetBlockedUsers,
+    UnBlockUser
 }
 
 export const chatService = {
@@ -55,12 +58,12 @@ export const followServices = {
     acceptRequest,
     rejectRequest,
     unfollowUser,
-    blockUser,
-    unblockUser,
-
-    
+    blockReq,
+    unblockReq,
+    GetMuteUsers
 }
 
 export const notificationServices = {
-    getNotifications
+    getNotifications,
+    markNotificationsAsRead
 }

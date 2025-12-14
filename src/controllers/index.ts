@@ -1,11 +1,11 @@
-import { addRecoveryEmail, autoLogin, changePassword, getUser, googleAuth, googleCallback, logout, RefreshAccessToken, resendOTP, resetPassword, sendEmailVerification, sendForgetPasswordMail, signIn, signup, verifyOtp } from "./auth.Controllers";
+import { addRecoveryEmail, autoLogin, changePassword, getUser, googleAuth, googleCallback, logout, RefreshAccessToken, resendOTP, resetPassword, sendEmailVerification, signIn, signup, verifyOtp } from "./auth.Controllers";
 import { GetMessages, GetChatUsers, getRoomDetails, SendMedia } from "./chat.Controllers";
-import { AcceptRequest, BlockUser, followRequest, RequestReject, UnBlockUser, UnFollowUser } from "./follower.Controllers";
-import { GetNotifications } from "./notifications.Controllers";
-import { AccountPrivacy, DeleteCoverImage, DeleteProfileImage, EditCoverImage, EditProfileImage, GetUser, SearchQuery, UpdateProfile } from "./user.Controllers";
+import { AcceptRequest, BlockReq, followRequest, RequestReject, UnFollowUser, GetMuteUsers, UnBlockReq } from "./follower.Controllers";
+import { GetNotifications, markNotificationsAsRead } from "./notifications.Controllers";
+import { AccountPrivacy, DeleteCoverImage, DeleteProfileImage, EditCoverImage, EditProfileImage, GetUser, SearchQuery, UpdateProfile, BlockUser, UnBlockUser, GetBlockedUsers } from "./user.Controllers";
 
 export const authController = {
-    signup, 
+    signup,
     signIn,
     logout,
     RefreshAccessToken,
@@ -15,7 +15,6 @@ export const authController = {
     autoLogin,
     sendEmailVerification,
     verifyOtp,
-    sendForgetPasswordMail,
     changePassword,
     getUser,
     resendOTP,
@@ -23,14 +22,17 @@ export const authController = {
 }
 
 export const userController = {
- EditCoverImage,
- EditProfileImage,
- DeleteCoverImage,
- DeleteProfileImage,
- UpdateProfile,
- SearchQuery,
- GetUser,
- AccountPrivacy
+    EditCoverImage,
+    EditProfileImage,
+    DeleteCoverImage,
+    DeleteProfileImage,
+    UpdateProfile,
+    SearchQuery,
+    GetUser,
+    AccountPrivacy,
+    BlockUser,
+    GetBlockedUsers,
+    UnBlockUser
 }
 
 export const chatController = {
@@ -45,11 +47,14 @@ export const followController = {
     AcceptRequest,
     RequestReject,
     UnFollowUser,
-    BlockUser,
+    BlockReq,
     UnBlockUser,
+    GetMuteUsers,
+    UnBlockReq
 
 }
 
 export const NotificationController = {
-    GetNotifications
+    GetNotifications,
+    markNotificationsAsRead
 }

@@ -61,6 +61,10 @@ const userSchema = new Schema<IUser>({
         type: Boolean,
         default:false
     },
+    OtpExpireAt:{
+        type: Date,
+        default:null
+    },
     refreshToken: {
         type: String,
         default: null

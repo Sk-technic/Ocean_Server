@@ -1,26 +1,25 @@
 import { Types } from "mongoose";
-
-export interface IFromUser {
-  _id: Types.ObjectId;
-  profilePic?: string | null;
-  username?: string | null;
-  fullName?: string | null;
-}
-
-export interface ISingleNotification {
-  type: "follow" | "follow-request" | "request-accepted" | "like" | "comment";
-  fromUser: IFromUser;
-  text?: string | null;
-  postId?: Types.ObjectId | null;
-  isRead: boolean;
-  createdAt: Date;
-}
-
-export interface INotificationInbox {
+export interface INotification extends Document {
   _id?: Types.ObjectId;
-  user: Types.ObjectId;
-  unreadCount: number;
-  notifications: ISingleNotification[];
+
+  user: Types.ObjectId;       // receiver
+  actor: Types.ObjectId;      // who performed action
+
+  type:
+    | "follow"
+    | "follow-request"
+    | "request-accepted"
+    | "like"
+    | "comment"
+    | "mention";
+
+  postId?: Types.ObjectId | null;
+
+  message?: string;
+
+  isRead: boolean;
+  readAt?: Date | null;
+
   createdAt?: Date;
   updatedAt?: Date;
 }

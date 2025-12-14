@@ -15,6 +15,7 @@ export interface IUser extends Document {
     bio?: string;
     isActive?: 'online' | 'offline' | 'away';
     isOtpVerified:boolean;
+    OtpExpireAt:Date|null;
     coverImage?: string;
     status: 'active' | 'banned' | 'suspended';
     lastActive: Date | null;

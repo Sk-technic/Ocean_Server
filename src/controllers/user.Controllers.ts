@@ -42,3 +42,18 @@ export const AccountPrivacy = asyncHandler(async (req:Request, res:Response)=>{
     const result = await userService.AccountPrivacy(req)
     res.status(200).json(new ApiResponse(200,result,"Account Privacy updated"))
 })
+
+export const BlockUser = asyncHandler(async (req:Request, res:Response)=>{
+    const result = await userService.BlockUser(req)
+    res.status(200).json(new ApiResponse(200,result,"user Blocked"))
+})
+
+export const GetBlockedUsers = asyncHandler(async (req:Request, res:Response)=>{
+    const result = await userService.GetBlockedUsers(req)
+    res.status(200).json(new ApiResponse(200,result,"Blocked users fetched successfully"))
+})
+
+export const UnBlockUser = asyncHandler(async (req:Request, res:Response)=>{
+    const result = await userService.UnBlockUser(req)
+    res.status(200).json(new ApiResponse(200,result,"user unblocked"))
+})

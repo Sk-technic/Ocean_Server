@@ -4,9 +4,10 @@ import { ApiError } from "../utils/ApiError";
 import mongoose from "mongoose";
 import { publishNotification } from "../events/redis/notification.Pub";
 
+
 export const sendFollow = async (req: Request) => {
-    const followerId = req.identity;   // jo follow kar raha hai
-    const targetId = req.params.id;    // jise follow kar raha hai
+    const followerId = req.identity;   // Who is following
+    const targetId = req.params.id;    // Who gets followed
 
     if (!followerId || !targetId) throw new ApiError(400, "Missing required fields");
 
@@ -15,8 +16,17 @@ export const sendFollow = async (req: Request) => {
     }
 
     const targetUser = await Collections.UserModel.findById(targetId)
-        .select("isPrivate blockedUsers")
+        .select("isPrivate")
         .lean();
+
+    const isblocked = await Collections.BlockModel.findOne({
+        blocker: targetId,
+        blocked: followerId
+    });
+
+    if (isblocked) {
+        throw new ApiError(403, "You have been blocked by this user");
+    }
 
     if (!targetUser) throw new ApiError(404, "User not found");
 
@@ -40,19 +50,21 @@ export const sendFollow = async (req: Request) => {
     });
 
     if (existing) {
+        if (existing.status == "blocked") throw new ApiError(400, "you can't follow this user.")
         throw new ApiError(400, "Already followed or follow request pending");
     }
 
     const isPrivate = targetUser.isPrivate;
     const status = isPrivate ? "requested" : "accepted";
 
+    // Create follow relation
     const follow = await Collections.FollowModel.create({
         follower: followerId,
         following: targetId,
         status,
     });
 
-    // Only increase counters for ACCEPTED follow
+    // Increase counters only when follow is accepted
     if (!isPrivate) {
         await Collections.UserModel.updateOne(
             { _id: followerId },
@@ -64,61 +76,52 @@ export const sendFollow = async (req: Request) => {
         );
     }
 
-    // =============================
-    // CREATE NOTIFICATION PAYLOAD
-    // =============================
-    const notificationDoc = {
+
+    const notification = await Collections.NotificationModel.create({
+        user: targetId,                 // receiver
+        actor: followerUser?._id,       // sender
         type: isPrivate ? "follow-request" : "follow",
-        fromUser: {
-            _id: followerUser?._id,
-            username: followerUser?.username,
-            fullName: followerUser?.fullName,
-            profilePic: followerUser?.profilePic,
-        },
-        text: isPrivate
-            ? `${followerUser?.fullName} sent you a follow request`
-            : `${followerUser?.fullName} started following you`,
-        isRead: isPrivate?false:true,
-        createdAt: new Date(),
-        _id: new mongoose.Types.ObjectId() // assign fresh ID NOW
-    };
+        message: isPrivate
+            ? `sent you a follow request`
+            : `started following you`,
+        postId: null,
+        isRead: false,
+        createdAt: new Date()
+    });
 
-    // =============================
-    // UPSERT INTO NOTIFICATION MODEL
-    // =============================
-    const updated = await Collections.NotificationModel.findOneAndUpdate(
-        { user: targetId },
-        {
-            $push: {
-                notifications: {
-                    $each: [notificationDoc],
-                    $position: 0,
-                },
-            },
-            $inc: { unreadCount: 1 },
-        },
-        { new: true, upsert: true }
-    ).lean();
 
-    const unreadCount = updated?.unreadCount;
+    const unreadCount = await Collections.NotificationModel.countDocuments({
+        user: targetId,
+        isRead: false,
+    });
 
-    // =============================
-    // PUBLISH THROUGH REDIS
-    // =============================
+    // ============================================
+    // SEND REAL-TIME NOTIFICATION THROUGH REDIS
+    // ============================================
     await publishNotification(`notification:${targetId}`, {
         event: isPrivate ? "follow-request" : "follow",
         user: targetId,
-        notification: notificationDoc, // ALREADY HAS _id
+        notification: {
+            _id: notification._id,
+            actor: {
+                _id: followerUser?._id,
+                username: followerUser?.username,
+                profilePic: followerUser?.profilePic
+            },
+            type: notification.type,
+            message: notification.message,
+            isRead: false,
+            createdAt: notification.createdAt
+        },
         unreadCount
     });
 
     return {
         message: isPrivate ? "Follow request sent" : "Followed successfully",
         follow,
-        notification: notificationDoc
+        notification
     };
 };
-
 
 export const acceptRequest = async (req: Request) => {
     const targetId: string = req.identity;     // jisko request aayi
@@ -151,11 +154,11 @@ export const acceptRequest = async (req: Request) => {
     const noti = await Collections.NotificationModel.findOneAndUpdate(
         {
             user: targetId,
-            "notifications._id": new mongoose.Types.ObjectId(notificationId),
+            _id: new mongoose.Types.ObjectId(notificationId),
         },
         {
             $set: {
-                "notifications.$.type": "follow",
+                type: "follow",
             },
         },
         { new: true }
@@ -177,15 +180,10 @@ export const rejectRequest = async (req: Request) => {
         status: "requested"
     });
 
-    await Collections.NotificationModel.findOneAndUpdate(
+    await Collections.NotificationModel.findOneAndDelete(
         {
             user: targetId,
-            "notifications._id": notificationId,
-        },
-        {
-            $pull: {
-                notifications: { _id: notificationId },
-            },
+            _id: notificationId,
         },
         { new: true }
     );
@@ -201,55 +199,76 @@ export const unfollowUser = async (req: Request) => {
     const followerId = req.identity;
     const targetId = req.params.id;
 
+    if (!followerId || !targetId) {
+        throw new ApiError(400, "User ID missing");
+    }
+
     const found = await Collections.FollowModel.findOneAndDelete({
         follower: followerId,
         following: targetId,
-        status: "accepted"
+        status: "accepted",
     });
 
-    if (!found) throw new ApiError(400, "You are not following this user");
-
-    return true
-};
-
-export const blockUser = async (req: Request) => {
-    const blockerId = req.identity;
-    const targetId = req.params.id;
-
-    let follow = await Collections.FollowModel.findOne({
-        follower: blockerId,
-        following: targetId
-    });
-
-    if (!follow) {
-        follow = await Collections.FollowModel.create({
-            follower: blockerId,
-            following: targetId,
-            status: "blocked",
-            actionBy: blockerId
-        });
-    } else {
-        follow.status = "blocked";
-        follow.actionBy = new mongoose.Types.ObjectId(blockerId);
-        await follow.save();
+    if (!found) {
+        throw new ApiError(400, "You are not following this user");
     }
-    return follow;
+
+    await Collections.UserModel.updateOne(
+        { _id: followerId },
+        { $inc: { followingCount: -1 } }
+    );
+    await Collections.UserModel.updateOne(
+        { _id: targetId },
+        { $inc: { followersCount: -1 } }
+    );
+
+
+    return {
+        message: "Unfollowed successfully",
+    };
 };
 
-export const unblockUser = async (req: Request) => {
+export const blockReq = async (req: Request) => {
     const blockerId = req.identity;
     const targetId = req.params.id;
 
     const follow = await Collections.FollowModel.findOne({
-        follower: blockerId,
-        following: targetId,
+        follower: targetId,
+        following: blockerId,
+        status: "requested"
+    });
+
+    if (!follow) throw new ApiError(400, "Follow request not found");
+
+    const updated = await Collections.FollowModel.findOneAndUpdate(
+        {
+            _id: follow._id,
+        },
+        {
+            status: "blocked",
+            actionBy: blockerId,
+        },
+        { new: true }
+    );
+
+    await Collections.NotificationModel.findOneAndDelete({ actor: targetId })
+
+    return updated;
+};
+
+export const unblockReq = async (req: Request) => {
+    const blockerId = req.identity;
+    const targetId = req.params.id;
+    console.log(targetId, blockerId);
+
+
+    const follow = await Collections.FollowModel.findOneAndDelete({
+        follower: targetId,
+        following: blockerId,
         status: "blocked"
     });
 
     if (!follow) throw new ApiError(400, "User not blocked");
-
-    // delete block entry
-    await follow.deleteOne();
 
     return true;
 };
@@ -292,3 +311,38 @@ export const getMutual = async (req: Request) => {
 
     return { isMutual: meFollowing && theyFollowing };
 };
+
+export const GetMuteUsers = async (req: Request) => {
+    const userId = req.identity;
+
+    const cursor = req.query.cursor as string | undefined;
+
+    const limit = req.query.limit ? Number(req.query.limit) : 20;
+
+    const query: any = {
+        following: userId,
+        status: "blocked",
+    };
+
+    if (cursor) {
+        query._id = { $lt: cursor };
+    }
+
+    const records = await Collections.FollowModel.find(query)
+        .sort({ _id: -1 })
+        .limit(limit + 1)
+        .populate("follower", "_id username fullName profilePic");
+
+    let nextCursor = null;
+
+    if (records.length > limit) {
+        nextCursor = records[limit]._id;
+        records.splice(limit, 1);
+    }
+
+    return {
+        data: records,
+        nextCursor,
+    };
+};
+

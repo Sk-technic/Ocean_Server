@@ -170,6 +170,8 @@ export const registerChatEvents = (
   })
 
   socket.on("accept:message_request", async ({ userId, roomId, createdBy }) => {
+    console.log(userId,roomId,createdBy);
+    
     if (!userId || !roomId || !createdBy) throw new Error("fields are missing!")
         const result = await chatService.acceptMessageRequest(userId,roomId,createdBy)
         if(result){

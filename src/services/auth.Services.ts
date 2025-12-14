@@ -239,35 +239,54 @@ export const autoLogin = async (req: Request) => {
   return { loggedIn: user, accessToken: accessToken, refreshToken: refreshToken };
 };
 
-// export const sendEmailVerification = async (req: Request) => {
+export const sendEmailVerification = async (req: Request) => {
+  const { email } = req.body;
+console.log(req.identity);
+console.log(req.User,req.user);
 
-//   const user = await Collections.UserModel.findOne({ email: req?.User?.email, isDeleted: false })
 
-//   if (!user) throw new ApiError(400, "Unauthorized");
-//   if (user?.isemailVerified) throw new ApiError(400, "your email is verified.")
+const query = {
+  email,
+  isDeleted: false,
+  ...(req.identity ? { _id: req.identity } : {}),
+};
 
-//   const { rawToken, hashedToken } = await generateToken(8)
+  const user = await Collections.UserModel.findOne(query);
 
-//   const tokenuser = await Collections.UserModel.findOneAndUpdate({
-//     email: req?.User?.email,
-//     isDeleted: false
-//   }, {
-//     $set: {
-//       Token: hashedToken,
-//       TokenExpiry: Date.now() + 5 * 60 * 1000
-//     }
-//   }, {
-//     new: true
-//   })
-//   const payload = {
-//     to: tokenuser?.email,
-//     Token: rawToken,
-//     Name: tokenuser?.firstName
-//   }
+  if (!user) throw new ApiError(400, "this email is not registered");
+  if (!user.isemailVerified) throw new ApiError(400, "your email is not verified yet");
 
-//   await SentOtpToMail(payload)
 
-// }
+  if (user.isOtpVerified && user.OtpExpireAt && user.OtpExpireAt < new Date()) {
+    user.isOtpVerified = false;
+    user.OtpExpireAt = null;
+    await user.save();
+  }
+
+
+  const otp = generateOTP();
+
+  await Collections.UserModel.updateOne(
+    { email, isDeleted: false, status: "active" },
+    {
+      isOtpVerified: true,
+      OtpExpireAt: new Date(Date.now() + 2 * 60 * 1000)
+    }
+  );
+
+  await RedisHelpers.setOtp(email, otp, 120);
+
+  const payload = {
+    to: email,
+    Token: Number(otp),
+    Name: user.firstName
+  };
+
+  await SentOtpToMail(payload);
+
+  return { _id: user._id };
+};
+
 
 export const verifyOtp = async (req: Request) => {
   const { token, userId } = req.body;
@@ -290,8 +309,7 @@ export const verifyOtp = async (req: Request) => {
   const verifiedUser = await Collections.UserModel.findByIdAndUpdate(
     userId,
     {
-      isVerified: true,
-      isOtpVerified: true
+      isOtpVerified: false
     },
     { new: true }
   ).select("-passwordHash -refreshToken -isDeleted");
@@ -300,58 +318,28 @@ export const verifyOtp = async (req: Request) => {
   return verifiedUser?._id;
 };
 
-export const sendForgetPasswordMail = async (req: Request) => {
-  const email = req?.User?.email
-  const Name = req?.User?.fullName
+export const resetPassword = async (req: Request): Promise<boolean> => {
+  const { newPassword, userId} = req.body;
 
-  const { rawToken, hashedToken } = await generateToken(10)
+  if(!newPassword || !userId) throw new ApiError(400,"fields are missing.")
 
-  await Collections.UserModel.findOneAndUpdate({ email: email }, { $set: { Token: hashedToken, TokenExpiry: Date.now() + 10 * 60 * 1000 } })
+    const user = await Collections.UserModel.findOne({_id:userId,isDeleted:false,status:"active",isOtpVerified:false})
 
-  const info = await forgetPasswordMail({ email: email!.toString(), Token: rawToken, Name })
+    if(user){
+      user.passwordHash=newPassword
+      user.isOtpVerified=false
+    }
 
-  return info;
+  const payload = {
+    email: user?.email!,
+    Name: user?.fullName!
+  }
+  await updatePasswordConfirmation(payload)
+
+  await user?.save();
+
+  return true;
 }
-
-// export const resetPassword = async (req: Request): Promise<boolean> => {
-//   const { email, token, newPassword } = req.body;
-
-//   // Validate fields separately
-//   if (!email) throw new ApiError(400, "Email is required.");
-//   if (!token) throw new ApiError(400, "Reset token is required.");
-//   if (!newPassword) throw new ApiError(400, "New password is required.");
-
-//   // Find user
-//   const user = await Collections.UserModel.findOne({ email, isDeleted: false });
-//   if (!user) throw new ApiError(404, "User not found.");
-
-//   // Validate token
-//   const isValid = await verifyToken(token, user.Token, user.TokenExpiry);
-//   if (!isValid) {
-//     throw new ApiError(
-//       400,
-//       "This reset link is invalid or has expired. Please request a new one."
-//     );
-//   }
-
-//   const verifyPassword = validatePassword(newPassword);
-//   if (!verifyPassword.valid) {
-//     throw new ApiError(400, verifyPassword.message!);
-//   }    // Update password (pre-hook will hash it)
-//   user.passwordHash = newPassword;
-//   user.Token = null;
-//   user.TokenExpiry = null;
-
-//   const payload = {
-//     email: user?.email!,
-//     Name: user?.fullName!
-//   }
-//   await updatePasswordConfirmation(payload)
-
-//   await user.save();
-
-//   return true;
-// }
 
 export const changePassword = async (req: Request): Promise<boolean> => {
   const { newPassword, password } = req.body;

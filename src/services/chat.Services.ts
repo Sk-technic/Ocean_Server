@@ -478,6 +478,7 @@ export const getMessages = async (req: Request) => {
   };
 };
 
+
 export const chatRooms = async (req: Request) => {
   const { id } = req.query;
   if (!id) throw new ApiError(403, "User ID not provided.");
@@ -488,25 +489,22 @@ export const chatRooms = async (req: Request) => {
     {
       $match: {
         "participants.user": userId,
-        "lastMessageMeta.text": { $exists: true, $ne: "" }
-      }
+        "lastMessageMeta.text": { $exists: true, $ne: "" },
+      },
     },
-
     {
       $addFields: {
-        participantUsers: "$participants.user"
-      }
+        participantUsers: "$participants.user",
+      },
     },
-
     {
       $lookup: {
         from: "users",
         localField: "participantUsers",
         foreignField: "_id",
-        as: "userDetails"
-      }
+        as: "userDetails",
+      },
     },
-
     {
       $addFields: {
         participants: {
@@ -525,18 +523,17 @@ export const chatRooms = async (req: Request) => {
                     $filter: {
                       input: "$userDetails",
                       as: "ud",
-                      cond: { $eq: ["$$ud._id", "$$p.user"] }
-                    }
+                      cond: { $eq: ["$$ud._id", "$$p.user"] },
+                    },
                   },
-                  0
-                ]
-              }
-            }
-          }
-        }
-      }
+                  0,
+                ],
+              },
+            },
+          },
+        },
+      },
     },
-
     {
       $project: {
         _id: 1,
@@ -559,46 +556,76 @@ export const chatRooms = async (req: Request) => {
               email: "$$p.userDetails.email",
               unreadCount: "$$p.unreadCount",
               lastSeenAt: "$$p.lastSeenAt",
-            }
-          }
-        }
-      }
+            },
+          },
+        },
+      },
     },
-
-    { $sort: { "lastMessageMeta.createdAt": -1 } }
+    { $sort: { "lastMessageMeta.createdAt": -1 } },
   ]);
 
-  const allParticipantIds = chatRooms.flatMap((room) =>
+  const [blockedByMe, blockedMe] = await Promise.all([
+    Collections.BlockModel.find(
+      { blocker: userId },
+      { blocked: 1 }
+    ).lean(),
+
+    Collections.BlockModel.find(
+      { blocked: userId },
+      { blocker: 1 }
+    ).lean(),
+  ]);
+
+  const blockedByMeSet = new Set(
+    blockedByMe.map(b => b.blocked.toString())
+  );
+
+  const blockedMeSet = new Set(
+    blockedMe.map(b => b.blocker.toString())
+  );
+
+  const allParticipantIds = chatRooms.flatMap((room: any) =>
     room.participants.map((p: any) => p._id.toString())
   );
 
   const presenceData = await RedisHelpers.getUsersOnlineStatus(allParticipantIds);
-  const presenceMap = new Map(presenceData.map((u: any) => [u.userId, u]));
+  const presenceMap = new Map(
+    presenceData.map((u: any) => [u.userId, u])
+  );
 
-  const enrichedRooms = chatRooms.map((room: any) => ({
-    ...room,
-    participants: room.participants.map((p: any) => {
-      const presence = presenceMap.get(p._id.toString());
-      return {
-        ...p,
-        isOnline: presence?.isOnline || false,
-        lastActive: presence?.lastActive
-          ? new Date(Number(presence.lastActive))
-          : p.lastActive || null,
-      };
-    }),
-  }));
+  const enrichedRooms = chatRooms.map((room: any) => {
+    const blockedMeInRoom = room.participants.some(
+      (p: any) =>
+        blockedMeSet.has(p._id.toString()) &&
+        p._id.toString() !== userId.toString()
+    );
 
-  const finalResult = enrichedRooms.map((room: any) => ({
-    ...room,
-    participants: room.participants.map((p: any) => ({
-      ...p,
-      profilePic: optimizeCloudinaryUrl(p.profilePic, 200, 200),
-    })),
-  }));
+    return {
+      ...room,
+      blockedMe: blockedMeInRoom, // ✅ NEW KEY (group + single)
+      participants: room.participants.map((p: any) => {
+        const presence = presenceMap.get(p._id.toString());
 
-  return finalResult;
+        const isBlocked =
+          room.isGroup === false &&
+          blockedByMeSet.has(p._id.toString()) &&
+          p._id.toString() !== userId.toString();
+
+        return {
+          ...p,
+          isOnline: presence?.isOnline || false,
+          lastActive: presence?.lastActive
+            ? new Date(Number(presence.lastActive))
+            : p.lastActive || null,
+          isBlocked, 
+        };
+      }),
+    };
+  });
+
+  return enrichedRooms;
 };
+
 
 export const GetRoomDetails = async (req: Request): Promise<RoomResponse> => {
   const { roomId, userId } = req.query as { roomId: string; userId: string };
@@ -908,6 +935,7 @@ export const readChat = async (userId: string, roomId: string) => {
   return updatedRoom
 
 }
+
 export const MessageSeenUpdate = async (
   userId: string,
   roomId: string,
@@ -1033,7 +1061,7 @@ export const acceptMessageRequest = async (
   }
   const room = await Collections.ChatRoom.findOneAndUpdate(
     {
-      _id: (roomId),
+      _id: roomId,
       isGroup: false,
       createdBy: createdBy,
       status: "request",
@@ -1045,6 +1073,8 @@ export const acceptMessageRequest = async (
     { new: true }
   );
 
+  console.log("room: ",room);
+  
   if (!room) {
     throw new Error(
       "Message request cannot be accepted. Either the room doesn't exist, is not pending, or this user is not allowed to accept."

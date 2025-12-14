@@ -33,6 +33,7 @@ passport.use(
             lastName,
             username,
             profilePic: profile.photos?.[0].value,
+            isemailVerified:true
           });
         }
 

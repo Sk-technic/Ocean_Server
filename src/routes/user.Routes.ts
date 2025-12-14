@@ -20,6 +20,13 @@ UserRoute.route("/:roomId").get(userController.GetUser)
 
 UserRoute.route("/privacy/:userId").post(userController.AccountPrivacy)
 
+UserRoute.route("/block_user/:blockedUser").post(userController.BlockUser)
+
+UserRoute.route("/block_user/list").get(userController.GetBlockedUsers)
+
+UserRoute.route("/Unblock_user/:blockedUser").delete(userController.UnBlockUser)
+
+
 export { UserRoute };
 
 

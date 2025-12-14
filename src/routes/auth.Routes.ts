@@ -82,7 +82,7 @@ AuthRoute.route("/resendOTP").post(resendOtpRateLimiter,authController.resendOTP
  * @desc    Send verification email to confirm user’s email address
  * @access  Private
  */
-AuthRoute.route("/send-emailVarification").post(authController.sendEmailVerification);
+AuthRoute.route("/send-emailVerification").post(authController.sendEmailVerification);
 
 /**
  * @route   POST /verifyEmail
@@ -92,18 +92,11 @@ AuthRoute.route("/send-emailVarification").post(authController.sendEmailVerifica
 AuthRoute.route("/verify-otp").post(authController.verifyOtp);
 
 /**
- * @route   POST /forget-PasswordMail
- * @desc    Send a password reset email with a single-use token
- * @access  Public
- */
-AuthRoute.route("/forget-password").post(authController.sendForgetPasswordMail);
-
-/**
  * @route   PATCH /resetPassword
  * @desc    Reset user’s password using a valid token (rate-limited)
  * @access  Public
  */
-AuthRoute.route("/reset-forget-password").patch(
+AuthRoute.route("/reset-password").patch(
     resetPasswordRateLimiter,
     authController.resetPassword
 );
