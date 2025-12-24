@@ -1,5 +1,5 @@
 import { addRecoveryEmail, autoLogin, changePassword, getUser, googleAuth, googleCallback, logout, RefreshAccessToken, resendOtp, resetPassword, sendEmailVerification, signIn, signup, verifyOtp, } from "./auth.Services";
-import { createSingleRoom, editMessage, getMessages, sendMedia, GetRoomDetails, unsendMessage, clearChat, chatRooms, sendMessage, readChat, MessageSeenUpdate, acceptMessageRequest } from "./chat.Services";
+import { editMessage, getMessages, sendMedia, unsendMessage, clearChat, chatRooms, readChat, MessageSeenUpdate, acceptMessageRequest, sendTextMessage } from "./chat.Services";
 import { acceptRequest, blockReq, GetMuteUsers, rejectRequest, sendFollow, unblockReq, unfollowUser } from "./follower.Service";
 import { getNotifications, markNotificationsAsRead } from "./notifications";
 import { DeleteCoverImage, DeleteProfileImage, EditCoverImage, EditProfileImage, SearchQuery, UpdateProfile, GetUser, SetOnline, SetAway, updateLastActive, AccountPrivacy, BlockUser, UnBlockUser, GetBlockedUsers } from "./user.Services";
@@ -39,18 +39,16 @@ export const userService = {
 }
 
 export const chatService = {
-    sendMessage,
     sendMedia,
-    createSingleRoom,
     getMessages,
     chatRooms,
-    GetRoomDetails,
     unsendMessage,
     editMessage,
     clearChat,
     readChat,
     MessageSeenUpdate,
-    acceptMessageRequest
+    acceptMessageRequest,
+    sendTextMessage
 }
 
 export const followServices = {

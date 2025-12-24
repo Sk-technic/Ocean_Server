@@ -427,11 +427,15 @@ export const SetAway = async (userId: string) => {
 };
 
 export const updateLastActive = async (userId: string, isOnline: boolean) => {
-  await Collections.UserModel.findByIdAndUpdate(
+  const presence = await Collections.UserModel.findByIdAndUpdate(
     userId,
-    { lastActive: isOnline ? null : new Date() },
+    { lastActive: isOnline ? null : Date.now() },
     { new: true }
   );
+
+  
+
+  return presence
 };
 
 export const AccountPrivacy = async (req: Request) => {

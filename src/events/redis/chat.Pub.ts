@@ -16,7 +16,7 @@ export const publishMessage = async <T = any>(
     }
 
     const payload = JSON.stringify(message);
-    const result = await redisClient.publish(channel, payload);
+    const result = await redisClient.publish(`room:${channel}`, payload);
 
     // Optional: log in development
     if (process.env.NODE_ENV !== 'production') {

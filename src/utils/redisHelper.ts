@@ -19,6 +19,8 @@ export const TTL = {
 
 export const RedisHelpers = {
 
+  
+
   async setUser(userId: string, userData: any, ttlSeconds = TTL.USER) {
     const key = `cached:user:${userId}`;
     await redisClient.setEx(key, ttlSeconds, JSON.stringify(userData));
@@ -29,54 +31,81 @@ export const RedisHelpers = {
     return safeParse(await redisClient.get(key));
   },
 
-  async setUserOnline(userId: string, io: Server) {
-    const key = `user:presence:${userId}`;
+async setUserOnline(userId: string, io: Server) {
+  const countKey = `presence:count:${userId}`;
+  const presenceKey = `user:presence:${userId}`;
+
+  let count = await redisClient.incr(countKey);
+
+  // 🔴 SAFETY: Redis restart / stale state
+  if (count === 1) {
     const now = Date.now().toString();
 
-    await redisClient
-      .multi()
-      .hSet(key, { status: "online", lastActive: now })
-      .expire(key, 7200) // 2 hours TTL
-      .exec();
+    await redisClient.hSet(presenceKey, {
+      status: "online",
+      lastActive: now,
+    });
 
-    await userService.updateLastActive(userId, true)
+    await userService.updateLastActive(userId, true);
 
-    io.emit("user:status:update", { userId, status: "online", lastActive: null });
+    io.emit("user:status:update", {
+      userId,
+      status: "online",
+      lastActive: now,
+    });
+
     console.log(`🟢 User online -> ${userId}`);
-  },
+  }
+},
 
-  async setUserOffline(userId: string, io: Server) {
-    const key = `user:presence:${userId}`;
+
+
+async setUserOffline(userId: string, io: Server) {
+  const countKey = `presence:count:${userId}`;
+  const presenceKey = `user:presence:${userId}`;
+
+  let count = await redisClient.decr(countKey);
+
+  // 🔴 SAFETY: handle negative / invalid count
+  if (count <= 0) {
+    await redisClient.del(countKey);
+
     const now = Date.now().toString();
 
-    await redisClient
-      .multi()
-      .hSet(key, { status: "offline", lastActive: now })
-      .expire(key, 7200)
-      .exec();
-    await userService.updateLastActive(userId, false)
+    await redisClient.hSet(presenceKey, {
+      status: "offline",
+      lastActive: now,
+    });
+
+    const presence = await userService.updateLastActive(userId, false);
 
     io.emit("user:status:update", {
       userId,
       status: "offline",
-      lastActive: Number(now),
+      lastActive: presence?.lastActive ?? Number(now),
     });
 
     console.log(`🔴 User offline -> ${userId}`);
-  },
+    return;
+  }
 
-  async refreshUserPresence(userId: string) {
-    const key = `user:presence:${userId}`;
-    const now = Date.now().toString();
+  // still has active sockets
+  console.log(
+    `⚠️ User ${userId} still online on ${count} sockets`
+  );
+},
 
-    await redisClient
-      .multi()
-      .hSet(key, { status: "online", lastActive: now })
-      .expire(key, 7200) // refresh TTL
-      .exec();
 
-    console.log(`♻️ Refreshed presence TTL for user: ${userId}`);
-  },
+
+  // async refreshUserPresence(userId: string) {
+  //   const key = `user:presence:${userId}`;
+
+  //   await redisClient
+  //     .multi()
+  //     .hSet(key, { status: "online" })
+  //     .expire(key, 7200)
+  //     .exec();
+  // },
 
   async getUsersOnlineStatus(userIds: string[]) {
     if (!userIds?.length) return [];
@@ -89,7 +118,9 @@ export const RedisHelpers = {
     return userIds.map((id, i) => ({
       userId: id,
       isOnline: results[i]?.status === "online",
-      lastActive: results[i]?.lastActive ? Number(results[i].lastActive) : null,
+      lastActive: results[i]?.status === "offline" && results[i]?.lastActive
+        ? Number(results[i].lastActive)
+        : null,
     }));
   },
 
@@ -195,24 +226,24 @@ export const RedisHelpers = {
     if (keys.length) await redisClient.del(keys);
   },
 
-async setOtp(email: string, otp: string, expiryInSec: number = 50) {
-  const key = `otp:${email}`;
+  async setOtp(email: string, otp: string, expiryInSec: number = 50) {
+    const key = `otp:${email}`;
 
-  const salt = crypto.randomBytes(16).toString("hex");
-  const hashed = crypto
-    .createHmac("sha256", salt)
-    .update(otp)
-    .digest("hex");
+    const salt = crypto.randomBytes(16).toString("hex");
+    const hashed = crypto
+      .createHmac("sha256", salt)
+      .update(otp)
+      .digest("hex");
 
-  const encryptedData = CryptoUtil.encrypt(
-    JSON.stringify({ hashed, salt })
-  );
+    const encryptedData = CryptoUtil.encrypt(
+      JSON.stringify({ hashed, salt })
+    );
 
-  // ⏳ Dynamic expiry (default fallback = 50 seconds)
-  await redisClient.setEx(key, expiryInSec, encryptedData);
+    // ⏳ Dynamic expiry (default fallback = 50 seconds)
+    await redisClient.setEx(key, expiryInSec, encryptedData);
 
-  return true;
-},
+    return true;
+  },
 
 
   async getOtp(email: string) {

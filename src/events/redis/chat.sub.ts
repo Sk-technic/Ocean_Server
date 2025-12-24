@@ -1,35 +1,92 @@
 import { redisClient } from "../../config/redis";
 
-let subscriberClient: any = null;
-const subscribedRooms = new Set<string>();
+let subscriber: any;
+export const subscribeToChannel = async (io: any) => {
+  subscriber = redisClient.duplicate();
+  await subscriber.connect();
 
-export const subscribeToChannel = async <T = any>(
-  channel: string,
-  callback: (message: T) => void
-) => {
-  try {
-    if (!subscriberClient) {
-      subscriberClient = redisClient.duplicate();
-      await subscriberClient.connect();
+  await subscriber.pSubscribe("room:*", (message: string) => {
+    const data = JSON.parse(message);
+    console.log(data);
+
+    const roomId = data?.roomId?.toString() || data?.message?.roomId?.toString();
+
+    console.log("[REDIS SUB]", data);
+
+
+    //ack
+    if (data?.senderSocketId && data?.message && data?.tempId) {
+      io.to(data.senderSocketId).emit("message:sent", {
+        ...data.message,
+        tempId: data.tempId,
+      });
     }
 
-    if (subscribedRooms.has(channel)) return;
 
-    await subscriberClient.subscribe(channel, (rawMessage: string) => {
-      console.log(`[Redis:SUB] Message on ${channel}:`);
-      try {
-        const parsed: T = JSON.parse(rawMessage);
-        callback(parsed);
-      } catch (err) {
-        // console.error(`[Redis:SUB] Parse error on ${channel}:`, err);
+
+
+    //edit flow
+    if (data?.message?.isEdited) {
+      const targetRoomId = roomId || data.message.roomId?.toString();
+      io.to(targetRoomId).emit("message:edited", {
+        message: data.message,
+      });
+    }
+
+
+      // if (data.updateRoom) {
+      //   if (data.room?.type === "dm" && data.receivers) {
+      //     data.receivers.forEach((userId: string) => {
+      //       io.to(userId.toString()).emit("room:update", data);
+      //     });
+      //   } else {
+      //     io.to(targetRoomId).emit("room:update", data);
+      //   }
+      // }
+      // if (data.room?.type === "dm" && data.receivers) {
+      //   data.receivers.forEach((userId: string) => {
+      //     io.to(userId.toString()).emit("message:edited", {
+      //       message: data.message,
+      //     });
+      //   });
+      // }
+      // return;
+
+
+    //join room in new dm    
+    if (data?.room?.type === "dm" && data?.senderSocketId) {
+      io.to(data.senderSocketId).socketsJoin(data.room._id.toString());
+    }
+
+
+    // //edit room
+    //     if (data?.message && !data?.message?.isEdited) {
+    //       io.to(roomId).emit("chat:new_message", data);
+
+    //       if (data.receivers) {
+    //         data.receivers.forEach((userId: string) => {
+    //           io.to(userId.toString()).emit("chat:new_message", data);
+    //         });
+    //       }
+    //     }
+
+    if (data?.message || data.room) {
+      io.to(roomId).emit("chat:new_message", data);
+    }
+
+    if (data?.room) {
+      if (data.receivers && data.room.type == "dm") {
+        data.receivers.forEach((userId: string) => {
+          io.to(userId.toString()).emit("room:update", data);
+        });
+      } else {
+        io.to(roomId).emit("room:update", data);
       }
-    });
+      return
+    }
 
-    subscribedRooms.add(channel);
-    // console.log(`[Redis:SUB] Subscribed to channel: ${channel}`);
-  } catch (err) {
-    console.error(`[Redis:SUB] Failed to subscribe to ${channel}`, err);
-  }
+    if(data.toUserId){
+      io.to(data.toUserId.toString()).emit("room:update",data)
+    }
+  });
 };
-
-

@@ -11,81 +11,76 @@ export const registerChatEvents = (
   socket: Socket,
   userId: string
 ) => {
-  socket.on("chat:init", async ({ userId, toUserId }) => {
-    try {
-      const room = await chatService.createSingleRoom({ userId, toUserId });
-      console.log("room", room[0]);
-
-      const roomId = room[0]._id?.toString()
-      console.log(`User ${userId} joined room ${roomId}`);
-      socket.join(roomId);
-      await RedisHelpers.addUserToRoom(roomId, userId);
-
-      socket.emit("chat:init:success", room[0]);
-    } catch (err) {
-      console.error("❌ chat:init error:", err);
-      socket.emit("chat:error", { message: "Chat init failed" });
-    }
-  });
-
   socket.on("chat:join", async (roomId: string) => {
-    console.log('room milgaya: ', roomId);
     socket.join(roomId);
     await RedisHelpers.addUserToRoom(roomId, userId);
-    await subscribeToChannel(roomId, (data) => {
-      io.to(roomId).emit('chat:new_message', data);
-      if (data.message.media?.length > 0) {
-        data.recivers?.forEach((rid: string) => {
-          io.to(data.message.sender?._id).emit("room:update", data.room, data.message);
-          io.to(rid).emit("room:update", data.room, data.message);
-        });
-      }
-    });
-
   });
+
 
   socket.on("chat:leave", async (roomId: string, userId: string) => {
     socket.leave(roomId);
     await RedisHelpers.removeUserFromRoom(roomId, userId)
   })
 
-  socket.on("send:message", async (data) => {
+  socket.on("send:message", async (payload) => {
+    console.log("get in socket");
+
+    const result = await chatService.sendTextMessage(payload);
+    console.log("created", result);
+
+    const { room, message, receivers, senderSocketId, tempId } = result;
+
+    await publishMessage(room._id.toString(), {
+      roomId: room._id.toString(),
+      room,
+      message,
+      receivers,
+      tempId,
+      senderSocketId
+    });
+  });
+
+  socket.on("unsend:message", async ({ messageId, roomId, deletedBy }) => {
     try {
-      if (!data) throw new Error("data is missing.");
-
-      const { message, room, receiverIds } = await chatService.sendMessage(data);
-
-      if (!message || !room) {
-        throw new Error("send message failed.");
-      }
-
-      const roomId = room._id.toString();
-      const senderId = message.sender._id.toString();
-
-      const payload = {
-        room,
-        message: {
-          ...message,
-          lastMessage: message.content
-        }
-      };
-
-      await publishMessage(roomId, payload);
-
-      io.to(roomId).emit("chat:new_message", payload.message);
-
-      io.to(senderId).emit("room:update", room, payload.message);
-
-      receiverIds?.forEach((rid: string) => {
-        io.to(rid).emit("room:update", room, payload.message);
+      const { message, room, shouldUpdateLastMessage } = await chatService.unsendMessage({
+        messageId,
+        roomId,
+        userId: deletedBy,
       });
 
+      if (!message) {
+        throw new Error("Unsend message failed.");
+      }
+
+      io.to(roomId).emit("message:deleted", {
+        roomId,
+        messageId: message._id,
+      });
+
+      // receiverIds?.forEach((uid) => {
+      //   io.to(uid.toString()).emit("chat:room_updated", {
+      //     roomId,
+      //     shouldUpdateLastMessage,
+      //     message
+      //   });
+      // });
+
+      const plainMessage = message.toObject ? message.toObject() : message;
+            const finalRoomId = plainMessage.roomId?.toString() || roomId;
+
+      await publishMessage(finalRoomId, {
+          message: plainMessage,
+          room,
+          shouldUpdateLastMessage
+        });
 
     } catch (error: any) {
-      console.error("❌ send:message error:", error);
-      socket.emit("chat:error", { message: error.message || "Internal error" });
+      socket.emit("chat:error", {
+        message: error.message || "Internal error",
+      });
     }
   });
+
 
   socket.on("typing:start", async ({ roomId, user }) => {
     console.log("🚀 Received typing:start:", { roomId, user });
@@ -105,45 +100,51 @@ export const registerChatEvents = (
     io.to(roomId).emit("typing:update", { roomId, typingUsers });
   });
 
-  socket.on("unsend:message", async ({ messageId, roomId, userId }) => {
+  socket.on("edit:message", async ({
+    messageId,
+    roomId,
+    content,
+  }: {
+    messageId: string;
+    roomId: string;
+    content: string;
+  }) => {
     try {
+      const userId = socket.data.identity;
+      if (!userId) throw new Error("Unauthorized");
 
-      const { message, receiverIds } = await chatService.unsendMessage({ messageId, roomId, userId });
+      const {message,room,shouldUpdateLastMessage} = await chatService.editMessage({
+        messageId,
+        roomId,
+        newContent: content,
+        userId,
+      });
+
       if (!message) {
-        throw new Error("Unsend message failed.");
+        throw new Error("Edit message failed");
       }
-      console.log("successfull:", message);
-      const senderId = message?.sender?._id.toString();
-      // io.to(roomId).emit("message:unsend:success", { message });
 
-      io.to(roomId).emit("message:unsent", { message });
+      const plainMessage = message.toObject ? message.toObject() : message;
+      const finalRoomId = plainMessage.roomId?.toString() || roomId;
 
-      io.to(senderId).emit("unsend:update:room", message)
-
-      receiverIds?.forEach((rsd) => {
-        io.to(rsd).emit("unsend:update:room", message)
-      })
-
+      if (finalRoomId) {
+        await publishMessage(finalRoomId, {
+          message: plainMessage,
+          room,
+          shouldUpdateLastMessage
+        });
+      } else {
+        throw new Error("Room ID is undefined");
+      }
 
     } catch (error: any) {
-      console.error("❌ unsend:message error:", error);
-      socket.emit("chat:error", { message: error.message || "Internal error" });
+      console.error("❌ edit:message error:", error);
+      socket.emit("chat:error", {
+        message: error.message || "Internal server error",
+      });
     }
   });
 
-  socket.on("message:edit", async ({ messageId, roomId, newContent, userId }) => {
-    try {
-      const message = await chatService.editMessage(messageId, roomId, newContent, userId);
-      console.log("Edit successfull:", message);
-      if (!message) {
-        throw new Error("Edit message failed.");
-      }
-      io.to(roomId).emit("message:edit:success", { message });
-    } catch (error: any) {
-      console.error("❌ message:edit error:", error);
-      socket.emit("chat:error", { message: error.message || "Internal error" });
-    }
-  });
 
   socket.on("clear:chat", async ({ byUser, roomId }) => {
 
@@ -169,15 +170,15 @@ export const registerChatEvents = (
     io.to(senderId).emit("message:seen:success", seenMessages)
   })
 
-  socket.on("accept:message_request", async ({ userId, roomId, createdBy }) => {
-    console.log(userId,roomId,createdBy);
-    
-    if (!userId || !roomId || !createdBy) throw new Error("fields are missing!")
-        const result = await chatService.acceptMessageRequest(userId,roomId,createdBy)
-        if(result){
-          result?.participants.map((u)=>{
-            io.to(u?.user.toString()).emit("accept:message_request:success",result)
-          })
-        }
-  })
+  // socket.on("accept:message_request", async ({ userId, roomId, createdBy }) => {
+  //   console.log(userId, roomId, createdBy);
+
+  //   if (!userId || !roomId || !createdBy) throw new Error("fields are missing!")
+  //   const result = await chatService.acceptMessageRequest(userId, roomId, createdBy)
+  //   if (result) {
+  //     result?.participants?.map((u) => {
+  //       io.to(u?.user.toString()).emit("accept:message_request:success", result)
+  //     })
+  //   }
+  // })
 };

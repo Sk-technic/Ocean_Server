@@ -1,7 +1,7 @@
 import { UserModel } from "./user.Model";
 import { PostModel } from "./posts.Model";
 import { VideoModel } from "./videos.Model";
-import { ChatRoom, Message } from "./chat.Models";
+import { ChatMember, ChatRoom, Message } from "./chat.Models";
 import { FollowModel } from "./follower.Model";
 import { BlockModel } from "./blockedUser.Model";
 import NotificationModel from "./notification.Model";
@@ -13,7 +13,8 @@ const Collections = {
     Message,
     FollowModel,
     NotificationModel,
-    BlockModel
+    BlockModel,
+    ChatMember
 
 }
 

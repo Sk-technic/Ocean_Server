@@ -1,108 +1,91 @@
-import { Types, Document } from "mongoose";
+import { Document, Types } from "mongoose";
 
-/* --------------------------------
-   🔹 MESSAGE INTERFACE
-----------------------------------*/
+
 export interface IMedia {
-
-  url?: string;
-  type?: "image" | "video" | "audio" | "file";
+  url: string;
+  type: "image" | "video" | "audio" | "file";
   thumbnail?: string;
   size?: number;
   duration?: number;
 }
 
+
 export interface IMessage extends Document {
   _id: Types.ObjectId;
+
   roomId: Types.ObjectId;
   sender: Types.ObjectId;
+
+  type: "text" | "image" | "video" | "audio" | "file" | "system";
+
   content?: string;
   media?: IMedia[];
-  messageType: "text" | "media" | "image" | "reply" | "forward" | "video" | "audio";
+
   replyTo?: Types.ObjectId;
-  reactions?: Map<string, Types.ObjectId[]>; // emoji => [userIds]
-  readBy?: Types.ObjectId[];
-  deliveredTo?: Types.ObjectId[];
-  seenBy?: {
-    user:string;
-    time:Date;
-  }[];
+
+  reactions?: Map<string, Types.ObjectId[]>; // 👍 => [userIds]
+
   mentions?: Types.ObjectId[];
-  isEdited?: boolean;
-  isDeleted?: boolean;
+  status:"send"|"pending"|"seen";
+  isEdited: boolean;
+  isDeleted: boolean;
   deletedFor?: Types.ObjectId[];
-  status: "send" | "seen"  | "failed";
-  createdAt?: Date;
-  updatedAt?: Date;
+
+  createdAt: Date;
+  updatedAt: Date;
 }
 
-/* --------------------------------
-   🔹 CHAT ROOM INTERFACE
-----------------------------------*/
+
 export interface IChatRoom extends Document {
   _id: Types.ObjectId;
 
-  // Core
-  isGroup: boolean;
-  name?: string;
-  createdBy:Types.ObjectId;
-  // Per-user participant state
-  participants: {
-    _id:Types.ObjectId,
-    user: Types.ObjectId;
-    unreadCount: number;
-    isMuted: boolean;
-    isArchived: boolean;
-    lastSeenAt: Date | null;
-  }[];
+  type: "dm" | "group";
 
-  status:string;
-  // Group-specific
-  groupAdmin?: Types.ObjectId[];
+  // DM specific
+  membersHash?: string;
+
+  // Group specific
+  name?: string;
   description?: string;
   avatar?: string;
 
-  // Chat metadata
+  createdBy: Types.ObjectId;
+  admins: Types.ObjectId[];
+
   lastMessageMeta?: {
+    messageId: Types.ObjectId;
     text?: string;
-    sender?: Types.ObjectId;
+    sender: Types.ObjectId;
     messageType: string;
-    createdAt?: Date;
+    createdAt: Date;
   };
 
-  pinnedMessages?: Types.ObjectId[];
+  status: "active" | "request" | "blocked";
 
-  // Chat clear history
-  clearChat: {
-    byUser: string;
-    lastClearAt: Date;
-  }[];
-
-  // Timestamps
-  createdAt?: Date;
-  updatedAt?: Date;
+  createdAt: Date;
+  updatedAt: Date;
 }
 
-export interface Participant {
-  _id: string;
-  username: string;
-  fullName: string;
-  profilePic?: string;
-  email?: string;
-  isActive: boolean;
-}
 
-export interface RoomResponse {
-  _id: string;
-  isGroup: boolean;
-  name?: string;
-  description?: string;
-  avatar?: string;
-  groupAdmin?: string;
-  lastMessageMeta?: any;
-  ponnedMessage?: any;
-  unreadCount?: number;
-  isMuted?: boolean;
-  isArchived?: boolean;
-  participants: Participant[];
+export interface IChatMember extends Document {
+  _id: Types.ObjectId;
+
+  roomId: Types.ObjectId;
+  userId: Types.ObjectId;
+
+  role: "member" | "admin";
+
+  unreadCount: number;
+  lastActive: Date | null;
+
+clearChatAt?:Date|null;
+  isMuted: boolean;
+  isArchived: boolean;
+  isBlocked: boolean;
+
+  joinedAt: Date;
+  leftAt?: Date;
+
+  createdAt: Date;
+  updatedAt: Date;
 }

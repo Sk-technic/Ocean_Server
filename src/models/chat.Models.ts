@@ -1,125 +1,178 @@
-import mongoose, { Schema } from "mongoose";
-import { IChatRoom, IMessage } from "interfaces/chat.interface";
-
-// ---------------- CHAT ROOM MODEL ----------------
-const ChatRoomSchema = new Schema<IChatRoom>(
+import { IChatMember, IChatRoom, IMessage } from "interfaces/chat.interface";
+import mongoose, { Schema, Document, Types } from "mongoose";
+const MediaSchema = new Schema(
   {
-    // Core
-    isGroup: { type: Boolean, default: false },
-    name: { type: String, trim: true },
+    url: { type: String, required: true },
 
-    // Per-user participant state
-    participants: [
+    type: {
+      type: String,
+      enum: ["image", "video", "audio", "file"],
+      required: true,
+    },
+
+    thumbnail: { type: String },
+    size: { type: Number },
+    duration: { type: Number },
+  },
+  { _id: false }
+);
+
+
+const MessageSchema = new Schema<IMessage>(
+  {
+    roomId: {
+      type: Schema.Types.ObjectId,
+      ref: "ChatRoom",
+      required: true,
+    },
+
+    sender: {
+      type: Schema.Types.ObjectId,
+      ref: "User",
+      required: true,
+    },
+
+    type: {
+      type: String,
+      enum: ["text", "image", "video", "audio", "file", "system"],
+      default: "text",
+    },
+
+    content: String,
+
+    media: [
       {
-        user: { type: Schema.Types.ObjectId, ref: "User", required: true },
-        unreadCount: { type: Number, default: 0 },
-        isMuted: { type: Boolean, default: false },
-        isArchived: { type: Boolean, default: false },
-        lastSeenAt: { type: Date, default: null }
-      }
+        type: MediaSchema,
+        default: []
+      },
     ],
-    createdBy:{
-      type:Schema.Types.ObjectId,
-      ref:"User"
-    },
-    // Group specific
-    groupAdmin: [{ type: Schema.Types.ObjectId, ref: "User" }],
-    description: { type: String, trim: true },
-    avatar: { type: String },
 
-    // Chat metadata
-    lastMessageMeta: {
-      text: String,
-      sender: { type: Schema.Types.ObjectId, ref: "User" },
-      messageType: { type: String, default: "text" },
-      createdAt: Date,
-    },
     status:{
       type:String,
-      enum:["active","request"],
-      default:"active"
+      enum:["send","pending","seen"],
+      default:"pending"
     },
-    pinnedMessages: [{ type: Schema.Types.ObjectId, ref: "Message" }],
+    replyTo: {
+      type: Schema.Types.ObjectId,
+      ref: "Message",
+    },
 
-    // Chat clear history
-    clearChat: [
-      {
-        lastClearAt: { type: Date },
-        byUser: { type: Schema.Types.ObjectId, ref: "User" }
-      }
-    ],
+    reactions: {
+      type: Map,
+      of: [Schema.Types.ObjectId],
+      default: {},
+    },
+
+    mentions: [{ type: Schema.Types.ObjectId, ref: "User" }],
+
+    isEdited: { type: Boolean, default: false },
+    isDeleted: { type: Boolean, default: false },
+    deletedFor: [{ type: Schema.Types.ObjectId, ref: "User" }],
   },
   { timestamps: true }
 );
-// Indexes
-ChatRoomSchema.index({ participants: 1 }); // correct field name
-ChatRoomSchema.index({ updatedAt: -1 }); // sort recent first
-ChatRoomSchema.index({ isGroup: 1 });
+
+// Message Indexes
+MessageSchema.index({ roomId: 1, createdAt: -1 });
+MessageSchema.index({ sender: 1 });
+
+
+const ChatRoomSchema = new Schema<IChatRoom>(
+  {
+    type: {
+      type: String,
+      enum: ["dm", "group"],
+      required: true,
+    },
+
+    membersHash: {
+      type: String,
+      unique: true,
+      sparse: true,
+    },
+    name: String,
+    description: String,
+    avatar: String,
+
+    createdBy: {
+      type: Schema.Types.ObjectId,
+      ref: "User",
+      required: true,
+    },
+
+    admins: [{ type: Schema.Types.ObjectId, ref: "User" }],
+
+    lastMessageMeta: {
+      messageId: { type: Schema.Types.ObjectId, ref: "Message" },
+      text: String,
+      sender: { type: Schema.Types.ObjectId, ref: "User" },
+      messageType: String,
+      createdAt: Date,
+    },
+
+    status: {
+      type: String,
+      enum: ["active", "request", "blocked"],
+      default: "active",
+    },
+  },
+  { timestamps: true }
+);
+
+ChatRoomSchema.index({ type: 1 });
+ChatRoomSchema.index({ updatedAt: -1 });
+
+
+const ChatMemberSchema = new Schema<IChatMember>(
+  {
+    roomId: {
+      type: Schema.Types.ObjectId,
+      ref: "ChatRoom",
+      required: true,
+    },
+
+    userId: {
+      type: Schema.Types.ObjectId,
+      ref: "User",
+      required: true,
+    },
+    clearChatAt: { type: Date, default: null },
+
+    role: {
+      type: String,
+      enum: ["member", "admin"],
+      default: "member",
+    },
+
+    unreadCount: { type: Number, default: 0 },
+    lastActive: { type: Date, default: null },
+
+    isMuted: { type: Boolean, default: false },
+    isArchived: { type: Boolean, default: false },
+    isBlocked: { type: Boolean, default: false },
+
+    joinedAt: { type: Date, default: Date.now },
+    leftAt: { type: Date },
+  },
+  { timestamps: true }
+);
+
+ChatMemberSchema.index(
+  { roomId: 1, userId: 1 },
+  { unique: true }
+);
+ChatMemberSchema.index({ userId: 1 });
+ChatMemberSchema.index({ roomId: 1 });
 
 export const ChatRoom = mongoose.model<IChatRoom>(
   "ChatRoom",
   ChatRoomSchema
 );
-const MessageSchema = new Schema<IMessage>(
-  {
-    roomId: { type: Schema.Types.ObjectId, ref: "ChatRoom", required: true },
-    sender: { type: Schema.Types.ObjectId, ref: "User", required: true },
 
-    content: { type: String, trim: true, },
-
-    mentions: [{ type: Schema.Types.ObjectId, ref: "User" }], // ✅ @mentions
-
-    media: [{
-      url: String,
-      type: { type: String, enum: ["image", "video", "audio", "file"] },
-      thumbnail: String,
-      size: Number,
-      duration: Number,
-    }],
-
-    messageType: {
-      type: String,
-      enum: ["text", "media", "image", "reply", "forward", "video", "audio"],
-      default: "text",
-    },
-    replyTo: { type: Schema.Types.ObjectId, ref: "Message" },
-
-    reactions: {
-      type: Map,
-      of: [{ type: Schema.Types.ObjectId, ref: "User" }],
-      default: {},
-    },
-
-    readBy: [{ type: Schema.Types.ObjectId, ref: "User" }],
-    deliveredTo: [{ type: Schema.Types.ObjectId, ref: "User" }],
-    seenBy: [ {
-    user: {
-      type: mongoose.Schema.Types.ObjectId,
-      ref: "User",
-   },
-    time: {
-      type: Number,
-      default: Date.now
-    }
-  }],
-
-    isEdited: { type: Boolean, default: false },
-    isDeleted: { type: Boolean, default: false },
-    deletedFor: [{ type: Schema.Types.ObjectId, ref: "User" }],
-
-    status: {
-      type: String,
-      enum: ["send","seen","failed"],
-      default: "send",
-    },
-  },
-  { timestamps: true }
+export const ChatMember = mongoose.model<IChatMember>(
+  "ChatMember",
+  ChatMemberSchema
 );
-
-// Indexes
-MessageSchema.index({ roomId: 1, createdAt: -1 });
-MessageSchema.index({ sender: 1 });
-MessageSchema.index({ status: 1 });
 
 export const Message = mongoose.model<IMessage>(
   "Message",

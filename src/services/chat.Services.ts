@@ -3,474 +3,456 @@ import { Collections } from "../models";
 import { Request } from "express";
 import { deleteFromCloudinary, optimizeCloudinaryUrl, uploadMediaCloudinary, uploadToCloudinary } from "../utils/cloudinary";
 import mongoose, { Types } from "mongoose";
-import { RoomResponse } from "interfaces/chat.interface";
 import { publishMessage } from "../events/redis/chat.Pub";
 import { RedisHelpers } from "../utils/redisHelper";
 import { getCloudinaryThumbnailFromUrl } from "../utils/getVideothubnail";
 
-interface SendMessage {
-  receiverId: string;
-  content: string;
-  messageType: string;
-  senderId: string;
-  replyTo?: string | null;
-  roomId: string
-}
-
-export const createSingleRoom = async ({
-  userId,
+export const sendTextMessage = async ({
+  roomId,
+  senderId,
+  content,
   toUserId,
+  replyTo,
+  tempId,
+  senderSocketId,
 }: {
-  userId: string;
-  toUserId: string;
+  roomId?: string;
+  senderId: string;
+  toUserId?: string;
+  content: string;
+  replyTo?: string;
+  tempId: string;
+  senderSocketId: string;
 }) => {
-  const userObj = new mongoose.Types.ObjectId(userId);
-  const toUserObj = new mongoose.Types.ObjectId(toUserId);
+  let room;
 
-  let chatRoom = await Collections.ChatRoom.findOne({
-    isGroup: false,
-    "participants.user": { $all: [userObj, toUserObj] },
-    $expr: { $eq: [{ $size: "$participants" }, 2] },
-  }).populate("participants.user", "profilePic username fullName email");
+  if (!roomId && toUserId) {
+    const membersHash = [senderId, toUserId].sort().join("_");
 
-  if (chatRoom) {
-    return [chatRoom];
-  }
+    room = await Collections.ChatRoom.findOne({ type: "dm", membersHash });
 
-  chatRoom = await Collections.ChatRoom.create({
-    isGroup: false,
-    createdBy: userId,
-    participants: [
-      {
-        user: userObj,
-        unreadCount: 0,
-        isMuted: false,
-        isArchived: false,
-        lastSeenAt: null,
-      },
-      {
-        user: toUserObj,
-        unreadCount: 0,
-        isMuted: false,
-        isArchived: false,
-        lastSeenAt: null,
-      },
-    ],
-    status: "request"
-  });
+    if (!room) {
+      room = await Collections.ChatRoom.create({
+        type: "dm",
+        membersHash,
+        createdBy: senderId,
+        admins: [],
+      });
 
-  const rooms = await Collections.ChatRoom.aggregate([
-    { $match: { _id: chatRoom._id } },
-
-    // extract participant.user IDs for lookup
-    {
-      $addFields: {
-        participantUsers: "$participants.user",
-      },
-    },
-
-    // lookup user details
-    {
-      $lookup: {
-        from: "users",
-        localField: "participantUsers",
-        foreignField: "_id",
-        as: "userDetails",
-      },
-    },
-
-    {
-      $project: {
-        _id: 1,
-        isGroup: 1,
-        name: 1,
-        avatar: 1,
-        groupAdmin: 1,
-        lastMessageMeta: 1,
-        participants: {
-          $map: {
-            input: "$participants",
-            as: "p",
-            in: {
-              _id: "$$p.user",
-              unreadCount: "$$p.unreadCount",
-              isMuted: "$$p.isMuted",
-              isArchived: "$$p.isArchived",
-              lastSeenAt: "$$p.lastSeenAt",
-
-              // merge user details
-              userDetails: {
-                $arrayElemAt: [
-                  {
-                    $filter: {
-                      input: "$userDetails",
-                      as: "ud",
-                      cond: { $eq: ["$$ud._id", "$$p.user"] }
-                    }
-                  },
-                  0
-                ]
-              }
-            },
-          },
-        },
-      },
-    },
-
-    // final formatting to flatten structure
-    {
-      $addFields: {
-        participants: {
-          $map: {
-            input: "$participants",
-            as: "p",
-            in: {
-              _id: "$$p._id",
-              unreadCount: "$$p.unreadCount",
-              isMuted: "$$p.isMuted",
-              isArchived: "$$p.isArchived",
-              lastSeenAt: "$$p.lastSeenAt",
-              username: "$$p.userDetails.username",
-              fullName: "$$p.userDetails.fullName",
-              profilePic: "$$p.userDetails.profilePic",
-              email: "$$p.userDetails.email",
-            }
-          }
-        }
-      }
+      await Collections.ChatMember.insertMany([
+        { roomId: room._id, userId: senderId },
+        { roomId: room._id, userId: toUserId },
+      ]);
     }
-  ]);
-
-  return rooms;
-};
-
-export const sendMessage = async (message: SendMessage) => {
-  const { content, messageType, senderId, replyTo, roomId } = message;
-
-  if (!roomId || !senderId || !content) {
-    throw new Error("Missing required fields");
+  } else {
+    room = await Collections.ChatRoom.findById(roomId);
   }
 
-  const chatRoom = await Collections.ChatRoom.findById(roomId);
+  if (!room) throw new Error("Room not found");
 
-  if (!chatRoom) {
-    throw new Error("Chat room not found");
-  }
-  if (chatRoom?.status == "request") {
-    if (chatRoom.createdBy.toString() !== senderId) {
-      throw new Error("You must accept the message request before replying.");
-    }
-  }
-
-  // 2. Create Message
-  const newMessage = await Collections.Message.create({
-    roomId,
+  const message = await Collections.Message.create({
+    roomId: room._id,
     sender: senderId,
     content,
-    messageType,
-    replyTo: replyTo || null,
+    status: "send",
+    type: "text",
+    ...(replyTo ? { replyTo } : {}),
   });
 
-  // 3. Update last message meta + increment unread for others
-  await Collections.ChatRoom.updateOne(
-    { _id: roomId },
-    {
-      $set: {
-        lastMessageMeta: {
-          text: messageType === "text" ? content : "",
-          sender: senderId,
-          messageType,
-          createdAt: newMessage.createdAt,
-        },
-        "participants.$[sender].lastSeenAt": new Date(), // sender is up to date
-      },
-      $inc: {
-        "participants.$[receiver].unreadCount": 1, // receivers get unread increment
-      },
+const extractedMessage = await Collections.Message.findById(message._id)
+  .populate("sender", "_id username fullName profilePic")
+  .populate({
+    path: "replyTo",
+    select: "_id content sender type media createdAt",
+    populate: {
+      path: "sender",
+      select: "_id username fullName profilePic",
     },
+  });
+
+  await Collections.ChatRoom.updateOne(
+    { _id: room._id },
     {
-      arrayFilters: [
-        { "sender.user": senderId },
-        { "receiver.user": { $ne: senderId } },
-      ],
+      lastMessageMeta: {
+        messageId: message._id,
+        text: content,
+        sender: senderId,
+        createdAt: message.createdAt,
+      },
     }
   );
 
-  // 4. Fetch populated message for response
-  let extractedMessage: any = await Collections.Message.findById(newMessage._id)
-    .select(
-      "_id roomId sender content media messageType replyTo reactions readBy deliveredTo isEdited isDeleted createdAt status"
-    )
-    .populate("sender", "username fullName profilePic")
-    .populate({
-      path: "replyTo",
-      select: "_id content media messageType isDeleted sender",
-      populate: {
-        path: "sender",
-        select: "username fullName profilePic",
-      },
-    })
-    .lean();
+  await Collections.ChatMember.updateMany(
+    { roomId: room._id, userId: { $ne: senderId } },
+    { $inc: { unreadCount: 1 } }
+  );
 
-  // 5. (Optional) reply media simplification remains same
-  if (extractedMessage?.replyTo) {
-    const reply = extractedMessage.replyTo;
+  const receivers = await Collections.ChatMember.find({
+    roomId: room._id,
+  }).distinct("userId");
 
-    if (reply.media?.length > 0) {
-      const file = reply.media[0];
 
-      let thumbnail = file.thumbnail;
+  let roomResponse: any = room.toObject();
 
-      if (!thumbnail && file.url && file.resourceType === "video") {
-        thumbnail = file.url.replace("/upload/", "/upload/so_1/");
-      }
-
-      if (!thumbnail && file.resourceType === "image") {
-        thumbnail = file.url;
-      }
-
-      reply.media = [
-        {
-          resourceType: file.resourceType,
-          thumbnail,
+  if (room.type === "dm") {
+    const members = await Collections.ChatMember.aggregate([
+      { $match: { roomId: room._id } },
+      {
+        $lookup: {
+          from: "users",
+          localField: "userId",
+          foreignField: "_id",
+          as: "user",
         },
-      ];
-    }
+      },
+      { $unwind: "$user" },
+      {
+        $project: {
+          _id: "$user._id",
+          username: "$user.username",
+          fullName: "$user.fullName",
+          email: "$user.email",
+          profilePic: "$user.profilePic",
+          unreadCount: 1,
+          isMuted: 1,
+          isArchived: 1,
+          lastSeenAt: 1,
+        },
+      },
+    ]);
+
+    const presence = await RedisHelpers.getUsersOnlineStatus(
+      members.map((m: any) => m._id.toString())
+    );
+
+    const presenceMap = new Map(
+      presence.map((p: any) => [p.userId, p])
+    );
+
+    roomResponse = {
+      ...roomResponse,
+      unreadCount: 0,
+      isMuted: false,
+      isArchived: false,
+      blockedMe: false,
+      lastMessageMeta: {
+        _id: extractedMessage?._id.toString(),
+        senderId: extractedMessage?.sender?._id,
+        createdAt: extractedMessage?.createdAt,
+        text: extractedMessage?.content
+      },
+      participants: members.map((m: any) => {
+        const p = presenceMap.get(m._id.toString());
+        return {
+          ...m,
+          isOnline: p?.isOnline || false,
+          lastActive: p?.lastActive
+            ? new Date(Number(p.lastActive))
+            : null,
+          isBlocked: false,
+        };
+      }),
+    };
   }
 
-  // 6. Return refreshed room state for UI
-  const updatedRoom = await Collections.ChatRoom.findById(roomId).lean();
-
-  const newUpdatedRoom = updatedRoom?.participants
-    .filter((p: any) => p.user.toString() !== senderId)
-    .map((p: any) => p.user.toString())
   return {
+    room: roomResponse,
     message: extractedMessage,
-    room: updatedRoom,
-    receiverIds: newUpdatedRoom
+    receivers,
+    senderSocketId,
+    tempId,
+    toUserId:toUserId ? toUserId :null
   };
 };
 
 export const sendMedia = async (req: Request) => {
-  const { content, messageType, senderId, roomId, replyTo } = req.body;
+  const {
+    senderId,
+    roomId,
+    toUserId,
+    content,
+    replyTo,
+    tempId,
+    effectiveRoomId,
+    senderSocketId,
+  } = req.body;
 
-  const media = (req.files as any)?.media;
-  const files = Array.isArray(media) ? media : [media];
+  if (!senderId) throw new ApiError(400, "Missing sender");
 
-  const RoomDetails = await Collections.ChatRoom.findById(roomId);
+  const files = (req.files as { [fieldname: string]: Express.Multer.File[] })?.media;
 
-  if (RoomDetails?.status == "request") {
-    if (RoomDetails.createdBy.toString() !== senderId) {
-      throw new Error("You must accept the message request before replying.");
+  if (!files || files.length === 0) {
+    throw new ApiError(400, "Missing media files");
+  }
+
+  let room: any = null;
+
+  if (!roomId && toUserId) {
+    const membersHash = [senderId, toUserId].sort().join("_");
+
+    room = await Collections.ChatRoom.findOne({ type: "dm", membersHash });
+
+    if (!room) {
+      room = await Collections.ChatRoom.create({
+        type: "dm",
+        membersHash,
+        createdBy: senderId,
+        admins: [],
+      });
+
+      await Collections.ChatMember.insertMany([
+        { roomId: room._id, userId: senderId },
+        { roomId: room._id, userId: toUserId },
+      ]);
     }
-  }
-  if (!senderId || !messageType) {
-    throw new ApiError(400, "Missing required fields: senderId or messageType!");
-  }
-
-  if (!files || files.length === 0 || !files[0]) {
-    throw new ApiError(400, "No media files provided!");
+  } else {
+    room = await Collections.ChatRoom.findById(roomId);
   }
 
+  if (!room) throw new ApiError(404, "Room not found");
 
-  const allowedTypes = ["image", "video", "audio"];
-  const invalidFiles = files.filter(
-    (file: any) =>
-      !file.mimetype.startsWith("image/") &&
-      !file.mimetype.startsWith("video/") &&
-      !file.mimetype.startsWith("audio/")
+  const uploadedMedia = await Promise.all(
+    files.map(async (file) => {
+      const result = await uploadMediaCloudinary(file.path);
+      return {
+        url: result.secure_url,
+        type: result.resource_type,
+        thumbnail:
+          result.resource_type === "video"
+            ? getCloudinaryThumbnailFromUrl(result.secure_url)
+            : result.secure_url,
+        size: result.bytes,
+        duration: result.duration || null,
+      };
+    })
   );
 
-  if (invalidFiles.length > 0) {
-    const invalidNames = invalidFiles.map((f: any) => f.originalname).join(", ");
-    throw new ApiError(
-      400,
-      `Invalid file type detected: ${invalidNames}. Only images, videos, and audio are allowed.`
-    );
-  }
-
-  let uploadedMedia;
-  try {
-    uploadedMedia = await Promise.all(
-      files.map(async (file: any) => {
-        const filetype = file.mimetype.split("/")[0];
-
-        const media = await uploadMediaCloudinary(file.path, {
-          resource_type: filetype,
-        });
-
-        if (!allowedTypes.includes(media?.resource_type)) {
-          throw new ApiError(400, `Unsupported media type: ${media?.resource_type}`);
-        }
-
-        let thumbnail = null;
-
-        if (media?.resource_type === "video") {
-          thumbnail = getCloudinaryThumbnailFromUrl(media?.secure_url);
-        }
-
-        if (!thumbnail) thumbnail = media?.secure_url;
-
-        return {
-          url: media?.secure_url,
-          type: media?.resource_type,
-          size: media?.bytes?.toString(),
-          duration: media?.duration?.toString() || null,
-          thumbnail,
-          resourceType: media?.resource_type,
-        };
-      })
-    );
-  } catch (error) {
-    console.error("Cloudinary upload failed:", error);
-    throw new ApiError(500, "Failed to upload one or more files to Cloudinary");
-  }
-
-  const chatRoom = await Collections.ChatRoom.findById(roomId);
-  if (!chatRoom) throw new ApiError(404, "Chat room not found!");
-
-  const mediaMessage = await Collections.Message.create({
-    roomId: chatRoom._id,
+  const message = await Collections.Message.create({
+    roomId: room._id,
     sender: senderId,
-    content: content || null,
-    messageType: uploadedMedia[0]?.type || "media",
+    type: uploadedMedia[0].type,
+    content: content || "",
+    status: "send",
     media: uploadedMedia,
-    replyTo: replyTo || null,
+    ...(replyTo ? { replyTo } : {}),
   });
 
-  const previewText = `send ${uploadedMedia.length} ${uploadedMedia[0]?.type}`;
+  const lastUpdatetext =
+    message.content ||
+    `send ${message.media && message.media.length > 1
+      ? `${message.media.length} ${message.media[0]?.type} and more`
+      : `${message.media?.[0]?.type || message.type}`
+    }`;
 
   await Collections.ChatRoom.updateOne(
-    { _id: roomId },
+    { _id: room._id },
     {
-      $set: {
-        lastMessageMeta: {
-          text: previewText,
-          sender: senderId,
-          messageType: mediaMessage.messageType,
-          createdAt: mediaMessage.createdAt,
-        },
-        "participants.$[sender].lastSeenAt": new Date(),
+      lastMessageMeta: {
+        messageId: message._id,
+        text: lastUpdatetext,
+        sender: senderId,
+        createdAt: message.createdAt,
       },
-      $inc: {
-        "participants.$[receiver].unreadCount": 1,
-      },
-    },
-    {
-      arrayFilters: [
-        { "sender.user": senderId },
-        { "receiver.user": { $ne: senderId } },
-      ],
     }
   );
 
-  let extractedMessage: any = await Collections.Message.findById(mediaMessage._id)
-    .select(
-      "_id roomId sender content media messageType replyTo reactions readBy deliveredTo isEdited isDeleted createdAt status"
-    )
-    .populate("sender", "username fullName profilePic")
-    .populate({
-      path: "replyTo",
-      select: "_id content media messageType isDeleted sender",
-      populate: {
-        path: "sender",
-        select: "username fullName profilePic",
-      },
-    })
-    .lean();
+  await Collections.ChatMember.updateMany(
+    { roomId: room._id, userId: { $ne: senderId } },
+    { $inc: { unreadCount: 1 } }
+  );
 
-  if (extractedMessage?.replyTo?.media?.length > 0) {
-    const file = extractedMessage.replyTo.media[0];
-    extractedMessage.replyTo.media = [
+  const receivers = await Collections.ChatMember.find({
+    roomId: room._id,
+  }).distinct("userId");
+
+  const refreshedRoom = await Collections.ChatRoom.findById(room._id).lean();
+
+const extractedMessage = await Collections.Message.findById(message._id)
+  .populate("sender", "_id username fullName profilePic")
+  .populate({
+    path: "replyTo",
+    select: "_id content sender type media createdAt",
+    populate: {
+      path: "sender",
+      select: "_id username fullName profilePic",
+    },
+  });
+
+  let roomResponse: any = refreshedRoom;
+
+  if (refreshedRoom?.type === "dm") {
+    const members = await Collections.ChatMember.aggregate([
+      { $match: { roomId: refreshedRoom._id } },
       {
-        resourceType: file.resourceType,
-        thumbnail: file.thumbnail || file.url,
+        $lookup: {
+          from: "users",
+          localField: "userId",
+          foreignField: "_id",
+          as: "user",
+        },
       },
-    ];
+      { $unwind: "$user" },
+      {
+        $project: {
+          _id: "$user._id",
+          username: "$user.username",
+          fullName: "$user.fullName",
+          email: "$user.email",
+          profilePic: "$user.profilePic",
+          unreadCount: 1,
+          isMuted: 1,
+          isArchived: 1,
+          lastSeenAt: 1,
+        },
+      },
+    ]);
+
+    const presence = await RedisHelpers.getUsersOnlineStatus(
+      members.map((m: any) => m._id.toString())
+    );
+
+    const presenceMap = new Map(
+      presence.map((p: any) => [p.userId, p])
+    );
+
+    roomResponse = {
+      ...roomResponse,
+      unreadCount: 0,
+      isMuted: false,
+      isArchived: false,
+      blockedMe: false,
+      lastMessageMeta: {
+        _id: extractedMessage?._id.toString(),
+        senderId: extractedMessage?.sender?._id,
+        createdAt: extractedMessage?.createdAt,
+        text: lastUpdatetext,
+      },
+      participants: members.map((m: any) => {
+        const p = presenceMap.get(m._id.toString());
+        return {
+          ...m,
+          isOnline: p?.isOnline || false,
+          lastActive: p?.lastActive
+            ? new Date(Number(p.lastActive))
+            : null,
+          isBlocked: false,
+        };
+      }),
+    };
   }
 
-  const finalMessage = {
-    ...extractedMessage,
-    lastMessage: previewText,
-  };
-
-  const updatedRoom = await Collections.ChatRoom.findById(roomId).lean();
-
-  const receiverIds = updatedRoom?.participants
-    .filter((p: any) => p.user.toString() !== senderId)
-    .map((p: any) => p.user.toString());
-  const ChatRoomId = finalMessage?.roomId.toString()
-  const payload = {
-    room: updatedRoom,
-    recivers: receiverIds,
-    message: {
-      ...finalMessage
-    }
-  }
-
-  await publishMessage(ChatRoomId, payload)
+  await publishMessage(roomResponse?._id.toString(), {
+    roomId: roomResponse?._id,
+    room: roomResponse,
+    message: extractedMessage,
+    receivers,
+    tempId,
+    senderSocketId,
+    effectiveRoomId,
+    toUserId:toUserId ?toUserId:null
+  });
 };
+
 
 export const getMessages = async (req: Request) => {
   const { roomId } = req.params;
   const { cursor, limit } = req.query;
 
-  if (!roomId) throw new ApiError(400, "Room ID is required");
+  if (!roomId) {
+    throw new ApiError(400, "Room ID is required");
+  }
 
+  const userId = req.identity;
   const limitNum = Number(limit) || 50;
 
-  const query: any = { roomId };
+ 
+  const andConditions: any[] = [{ roomId }];
 
-  const room = await Collections.ChatRoom.findById(roomId).lean();
+  const member = await Collections.ChatMember.findOne({
+    roomId,
+    userId,
+  })
+    .select("clearChatAt")
+    .lean();
 
-  let lastClearAt: Date | null = null;
-
-  if (room?.clearChat && Array.isArray(room.clearChat)) {
-    const userClear = room.clearChat.find(
-      (c: any) => c.byUser?.toString() === req.identity.toString()
-    );
-
-    if (userClear?.lastClearAt) {
-      lastClearAt = userClear.lastClearAt;
-      query.createdAt = { $gt: lastClearAt };
-    }
+  if (member?.clearChatAt) {
+    andConditions.push({
+      createdAt: { $gt: member.clearChatAt },
+    });
   }
 
   if (cursor) {
-    const cursorMsg = await Collections.Message.findById(cursor).select("createdAt");
+    const cursorMsg = await Collections.Message.findById(cursor)
+      .select("createdAt")
+      .lean();
 
-    if (cursorMsg) {
-      query.createdAt = {
-        ...(query.createdAt || {}),
-        $lt: cursorMsg.createdAt,
-      };
+    if (!cursorMsg) {
+      throw new ApiError(400, "Invalid cursor");
     }
+
+    andConditions.push({
+      $or: [
+        { createdAt: { $lt: cursorMsg.createdAt } },
+        {
+          createdAt: cursorMsg.createdAt,
+          _id: { $lt: cursorMsg._id },
+        },
+      ],
+    });
   }
 
+  const query =
+    andConditions.length > 1 ? { $and: andConditions } : andConditions[0];
+
+  /**
+   * -------------------------------------------------
+   * Fetch messages (newest → oldest)
+   * -------------------------------------------------
+   */
   let messages = await Collections.Message.find(query)
-    .sort({ createdAt: -1 })
-    .limit(limitNum + 1)
+    .sort({ createdAt: -1, _id: -1 }) // newest first (DB efficient)
+    .limit(limitNum + 1) // extra one to detect hasMore
     .select(
-      "_id roomId sender content media messageType replyTo reactions readBy deliveredTo isEdited isDeleted createdAt status"
+      "_id roomId sender status content media type replyTo reactions isEdited isDeleted createdAt"
     )
     .populate("sender", "username fullName profilePic")
     .populate({
       path: "replyTo",
-      select: "content sender media messageType createdAt",
-      populate: { path: "sender", select: "username fullName profilePic" },
+      select: "content sender media type createdAt",
+      populate: {
+        path: "sender",
+        select: "username fullName profilePic",
+      },
     })
     .lean();
 
+  /**
+   * -------------------------------------------------
+   * Pagination handling
+   * -------------------------------------------------
+   */
   const hasMore = messages.length > limitNum;
 
-  if (hasMore) messages = messages.slice(0, limitNum);
+  if (hasMore) {
+    messages.pop(); // remove extra message
+  }
 
+  // 🔥 Cursor = OLDEST message of current batch
+  const nextCursor =
+    hasMore && messages.length > 0
+      ? messages[messages.length - 1]._id
+      : null;
+
+  /**
+   * -------------------------------------------------
+   * Return messages in chronological order
+   * (oldest → newest)
+   * -------------------------------------------------
+   */
   messages.reverse();
 
-  const nextCursor = hasMore ? messages[0]._id : null;
-
   return {
-    message: "Fetched messages.",
+    message: "Fetched messages",
     messages,
     nextCursor,
     hasMore,
@@ -479,51 +461,88 @@ export const getMessages = async (req: Request) => {
 };
 
 
+
 export const chatRooms = async (req: Request) => {
-  const { id } = req.query;
+  const { id, cursor } = req.query;
   if (!id) throw new ApiError(403, "User ID not provided.");
 
   const userId = new mongoose.Types.ObjectId(String(id));
+  const limit = 10;
 
-  const chatRooms = await Collections.ChatRoom.aggregate([
+  const cursorDate = cursor ? new Date(String(cursor)) : null;
+
+  const pipeline: any[] = [
+    { $match: { userId } },
+
+    {
+      $lookup: {
+        from: "chatrooms",
+        localField: "roomId",
+        foreignField: "_id",
+        as: "room",
+      },
+    },
+    { $unwind: "$room" },
+
     {
       $match: {
-        "participants.user": userId,
-        "lastMessageMeta.text": { $exists: true, $ne: "" },
+        "room.lastMessageMeta.text": { $exists: true, $ne: "" },
+        ...(cursorDate && {
+          "room.lastMessageMeta.createdAt": { $lt: cursorDate },
+        }),
       },
     },
+
     {
-      $addFields: {
-        participantUsers: "$participants.user",
+      $lookup: {
+        from: "chatmembers",
+        localField: "roomId",
+        foreignField: "roomId",
+        as: "members",
       },
     },
+
     {
       $lookup: {
         from: "users",
-        localField: "participantUsers",
+        localField: "members.userId",
         foreignField: "_id",
-        as: "userDetails",
+        as: "users",
       },
     },
+
     {
-      $addFields: {
+      $project: {
+        _id: "$room._id",
+        type: "$room.type",
+        name: "$room.name",
+        avatar: "$room.avatar",
+        description: "$room.description",
+        admins: "$room.admins",
+        createdBy: "$room.createdBy",
+        status: "$room.status",
+        lastMessageMeta: "$room.lastMessageMeta",
+
+        unreadCount: "$unreadCount",
+        isMuted: "$isMuted",
+        isArchived: "$isArchived",
+
         participants: {
           $map: {
-            input: "$participants",
-            as: "p",
+            input: "$members",
+            as: "m",
             in: {
-              _id: "$$p.user",
-              unreadCount: "$$p.unreadCount",
-              isMuted: "$$p.isMuted",
-              isArchived: "$$p.isArchived",
-              lastSeenAt: "$$p.lastSeenAt",
-              userDetails: {
+              _id: "$$m.userId",
+              unreadCount: "$$m.unreadCount",
+              isMuted: "$$m.isMuted",
+              isArchived: "$$m.isArchived",
+              user: {
                 $arrayElemAt: [
                   {
                     $filter: {
-                      input: "$userDetails",
-                      as: "ud",
-                      cond: { $eq: ["$$ud._id", "$$p.user"] },
+                      input: "$users",
+                      as: "u",
+                      cond: { $eq: ["$$u._id", "$$m.userId"] },
                     },
                   },
                   0,
@@ -534,66 +553,68 @@ export const chatRooms = async (req: Request) => {
         },
       },
     },
+
     {
-      $project: {
-        _id: 1,
-        isGroup: 1,
-        name: 1,
-        avatar: 1,
-        groupAdmin: 1,
-        lastMessageMeta: 1,
-        status: 1,
-        createdBy: 1,
+      $addFields: {
         participants: {
           $map: {
             input: "$participants",
             as: "p",
             in: {
               _id: "$$p._id",
-              username: "$$p.userDetails.username",
-              fullName: "$$p.userDetails.fullName",
-              profilePic: "$$p.userDetails.profilePic",
-              email: "$$p.userDetails.email",
+              username: "$$p.user.username",
+              fullName: "$$p.user.fullName",
+              profilePic: "$$p.user.profilePic",
+              email: "$$p.user.email",
               unreadCount: "$$p.unreadCount",
-              lastSeenAt: "$$p.lastSeenAt",
+              isMuted: "$$p.isMuted",
+              isArchived: "$$p.isArchived",
+              lastActive: "$$p.user.lastActive",
             },
           },
         },
       },
     },
+
     { $sort: { "lastMessageMeta.createdAt": -1 } },
-  ]);
+    { $limit: limit + 1 },
+  ];
+
+  const rooms = await Collections.ChatMember.aggregate(pipeline);
+
+  const hasNext = rooms.length > limit;
+  const slicedRooms = hasNext ? rooms.slice(0, limit) : rooms;
+
+  const nextCursor = hasNext
+    ? slicedRooms[slicedRooms.length - 1]?.lastMessageMeta?.createdAt
+    : null;
 
   const [blockedByMe, blockedMe] = await Promise.all([
     Collections.BlockModel.find(
       { blocker: userId },
       { blocked: 1 }
     ).lean(),
-
     Collections.BlockModel.find(
       { blocked: userId },
       { blocker: 1 }
     ).lean(),
   ]);
 
-  const blockedByMeSet = new Set(
-    blockedByMe.map(b => b.blocked.toString())
-  );
+  const blockedByMeSet = new Set(blockedByMe.map((b) => b.blocked.toString()));
+  const blockedMeSet = new Set(blockedMe.map((b) => b.blocker.toString()));
 
-  const blockedMeSet = new Set(
-    blockedMe.map(b => b.blocker.toString())
-  );
-
-  const allParticipantIds = chatRooms.flatMap((room: any) =>
+  const allParticipantIds = slicedRooms.flatMap((room: any) =>
     room.participants.map((p: any) => p._id.toString())
   );
 
-  const presenceData = await RedisHelpers.getUsersOnlineStatus(allParticipantIds);
+  const presenceData =
+    await RedisHelpers.getUsersOnlineStatus(allParticipantIds);
+
   const presenceMap = new Map(
     presenceData.map((u: any) => [u.userId, u])
   );
 
-  const enrichedRooms = chatRooms.map((room: any) => {
+  const enrichedRooms = slicedRooms.map((room: any) => {
     const blockedMeInRoom = room.participants.some(
       (p: any) =>
         blockedMeSet.has(p._id.toString()) &&
@@ -602,157 +623,40 @@ export const chatRooms = async (req: Request) => {
 
     return {
       ...room,
-      blockedMe: blockedMeInRoom, // ✅ NEW KEY (group + single)
+      blockedMe: blockedMeInRoom,
       participants: room.participants.map((p: any) => {
         const presence = presenceMap.get(p._id.toString());
 
         const isBlocked =
-          room.isGroup === false &&
+          room.type === "dm" &&
           blockedByMeSet.has(p._id.toString()) &&
           p._id.toString() !== userId.toString();
 
         return {
           ...p,
-          isOnline: presence?.isOnline || false,
-          lastActive: presence?.lastActive
-            ? new Date(Number(presence.lastActive))
-            : p.lastActive || null,
-          isBlocked, 
+          isOnline: presence?.isOnline ?? false,
+          lastActive: presence?.isOnline
+            ? null
+            : presence?.lastActive
+              ? new Date(Number(presence.lastActive))
+              : p.lastActive ?? null,
+          isBlocked,
         };
       }),
     };
   });
 
-  return enrichedRooms;
-};
-
-
-export const GetRoomDetails = async (req: Request): Promise<RoomResponse> => {
-  const { roomId, userId } = req.query as { roomId: string; userId: string };
-
-  if (!roomId || !userId) {
-    throw new ApiError(400, "roomId and userId are required.");
-  }
-
-  const userObj = new mongoose.Types.ObjectId(userId);
-
-  const result = await Collections.ChatRoom.aggregate([
-    {
-      $match: {
-        _id: new mongoose.Types.ObjectId(roomId),
-        "participants.user": userObj
-      }
-    },
-
-    {
-      $addFields: {
-        participantUsers: "$participants.user"
-      }
-    },
-
-    {
-      $lookup: {
-        from: "users",
-        localField: "participantUsers",
-        foreignField: "_id",
-        as: "userDetails"
-      }
-    },
-
-    {
-      $addFields: {
-        participants: {
-          $map: {
-            input: "$participants",
-            as: "p",
-            in: {
-              _id: "$$p.user",
-              unreadCount: "$$p.unreadCount",
-              isMuted: "$$p.isMuted",
-              isArchived: "$$p.isArchived",
-              lastSeenAt: "$$p.lastSeenAt",
-              userDetails: {
-                $arrayElemAt: [
-                  {
-                    $filter: {
-                      input: "$userDetails",
-                      as: "ud",
-                      cond: { $eq: ["$$ud._id", "$$p.user"] }
-                    }
-                  },
-                  0
-                ]
-              }
-            }
-          }
-        }
-      }
-    },
-
-    {
-      $addFields: {
-        currentUserState: {
-          $arrayElemAt: [
-            {
-              $filter: {
-                input: "$participants",
-                as: "p",
-                cond: { $eq: ["$$p._id", userObj] }
-              }
-            },
-            0
-          ]
-        }
-      }
-    },
-
-    {
-      $project: {
-        _id: 1,
-        isGroup: 1,
-        name: 1,
-        description: 1,
-        avatar: 1,
-        groupAdmin: 1,
-        lastMessageMeta: 1,
-        pinnedMessages: 1,
-        status: 1,
-        createdBy: 1,
-        unreadCount: "$currentUserState.unreadCount",
-        isMuted: "$currentUserState.isMuted",
-        isArchived: "$currentUserState.isArchived",
-        lastSeenAt: "$currentUserState.lastSeenAt",
-
-        participants: {
-          $map: {
-            input: "$participants",
-            as: "p",
-            in: {
-              _id: "$$p._id",
-              username: "$$p.userDetails.username",
-              fullName: "$$p.userDetails.fullName",
-              profilePic: "$$p.userDetails.profilePic",
-              email: "$$p.userDetails.email",
-              unreadCount: "$$p.unreadCount",
-              lastSeenAt: "$$p.lastSeenAt"
-            }
-          }
-        }
-      }
-    }
-  ]);
-
-  if (!result || result.length === 0) {
-    throw new ApiError(404, "Room not found or you are not a participant.");
-  }
-
-  return result[0];
+  return {
+    data: enrichedRooms,
+    nextCursor,
+    hasNext,
+  };
 };
 
 export const unsendMessage = async ({
   messageId,
   roomId,
-  userId
+  userId,
 }: {
   messageId: string;
   roomId: string;
@@ -762,39 +666,78 @@ export const unsendMessage = async ({
     throw new ApiError(400, "Missing required fields.");
   }
 
-  const originalMessage = await Collections.Message.findOne({
+  const message = await Collections.Message.findOne({
     _id: messageId,
     roomId,
     sender: userId,
     isDeleted: false,
   });
 
-  if (!originalMessage) {
+  if (!message) {
     throw new ApiError(404, "Message not found or already deleted.");
   }
 
-  const hasMedia = originalMessage.media && originalMessage.media.length > 0;
+  // delete media
+  if (Array.isArray(message.media) && message.media.length > 0) {
+    await Promise.all(
+      message.media.map((m) =>
+        m?.url ? deleteFromCloudinary(m.url) : Promise.resolve()
+      )
+    );
+  }
 
-  const newContent = hasMedia
-    ? "This message was removed or is no longer accessible."
-    : "This message was unsent.";
+  const deletedText = "This message was removed or is no longer accessible.";
 
-  const unsendText = hasMedia ? "media unavailable" : "This message was unsent.";
-
-  const roomDetails = await Collections.ChatRoom.findById(roomId);
-
-  if (
-    roomDetails &&
-    originalMessage?.createdAt?.getTime() ===
-    roomDetails.lastMessageMeta?.createdAt?.getTime()
-  ) {
-    await Collections.ChatRoom.findByIdAndUpdate(roomId, {
+  const updatedMessage = await Collections.Message.findByIdAndUpdate(
+    messageId,
+    {
       $set: {
-        "lastMessageMeta.text": unsendText,
-        "lastMessageMeta.sender": userId,
-        "lastMessageMeta.messageType": "text",
+        isDeleted: true,
+        content: deletedText,
+        media: [],
+        isEdited: false,
       },
-    });
+    },
+    { new: true }
+  ).lean();
+
+  const room = await Collections.ChatRoom.findById(roomId).lean();
+
+  const isLastMessage =
+    room?.lastMessageMeta?.messageId?.toString() === messageId;
+let roomLastMessage
+if (isLastMessage) {
+    roomLastMessage = await Collections.ChatRoom.findByIdAndUpdate(
+      roomId,
+      {
+        $set: {
+          "lastMessageMeta.text": deletedText,
+        },
+      },
+      { new: true } 
+    ).lean();
+  }
+
+  return {
+    room:roomLastMessage,
+    message: updatedMessage,
+    shouldUpdateLastMessage: isLastMessage, 
+  };
+};
+
+export const editMessage = async ({
+  messageId,
+  roomId,
+  newContent,
+  userId,
+}: {
+  messageId: string;
+  roomId: string;
+  newContent: string;
+  userId: string;
+}) => {
+  if (!messageId || !roomId || !newContent) {
+    throw new Error("Missing required fields");
   }
 
   const updatedMessage = await Collections.Message.findOneAndUpdate(
@@ -803,93 +746,69 @@ export const unsendMessage = async ({
       roomId,
       sender: userId,
       isDeleted: false,
+      type: "text",
     },
     {
-      $set: { isDeleted: true, content: newContent },
-    },
-    { new: true }
-  ).populate("sender", "username fullName profilePic");
-
-  if (hasMedia) {
-    const mediaList = originalMessage.media!;
-
-    await Promise.all(
-      mediaList.map(async (mediaItem) => {
-        await deleteFromCloudinary(mediaItem?.url ?? '');
-      })
-    );
-
-    updatedMessage!.media = [];
-    await updatedMessage!.save();
-  }
-
-  const payload = {
-    ...updatedMessage!.toObject(),
-    lastMessage: unsendText
-  }
-
-  await publishMessage(roomId, payload)
-  // 6. Return refreshed room state for UI
-  const updatedRoom = await Collections.ChatRoom.findById(roomId).lean();
-
-  const newUpdatedRoom = updatedRoom?.participants
-    .filter((p: any) => p.user.toString() !== payload?.sender?._id)
-    .map((p: any) => p.user.toString())
-  return {
-    message: {
-      ...updatedMessage!.toObject(),
-      lastMessage: unsendText,
-    },
-    receiverIds: newUpdatedRoom
-  };
-};
-
-export const editMessage = async (
-  messageId: string,
-  roomId: string,
-  newContent: string,
-  userId: string
-) => {
-  if (!messageId || !newContent) throw new Error("Missing Required Fields!");
-
-  const updatedMessage = await Collections.Message.findOneAndUpdate(
-    {
-      _id: messageId,
-      messageType: "text",
-      isDeleted: false,
-      roomId: roomId,
-      sender: userId
-    },
-    {
-      $set: { content: newContent, isEdited: true },
+      $set: {
+        content: newContent,
+        isEdited: true,
+      },
     },
     { new: true }
   )
-    .populate("sender", "username fullName profilePic")
+    .populate("sender", "_id username fullName profilePic")
+    .populate({
+      path: "replyTo",
+      select: "_id content sender type media createdAt",
+      populate: {
+        path: "sender",
+        select: "_id username fullName profilePic",
+      },
+    })
     .lean();
 
-  if (!updatedMessage) throw new Error("Message not found or deleted");
-
-  const roomDetails = await Collections.ChatRoom.findById(roomId);
-
-  if (
-    roomDetails &&
-    updatedMessage?.createdAt?.getTime() ===
-    roomDetails.lastMessageMeta?.createdAt?.getTime()
-  ) {
-    await Collections.ChatRoom.findByIdAndUpdate(roomId, {
-      $set: {
-        "lastMessageMeta.text": updatedMessage.content,
-        "lastMessageMeta.messageType": "text",
-      },
-    });
+  if (!updatedMessage) {
+    throw new Error("Message not found or cannot be edited");
   }
 
+  const room = await Collections.ChatRoom.findById(roomId).lean()
+
+  if (!room) throw new Error("Room not found");
+
+  const isLastMessage = room.lastMessageMeta?.messageId?.toString() === updatedMessage._id.toString();
+let roomLastMessage
+if (isLastMessage) {
+    roomLastMessage = await Collections.ChatRoom.findByIdAndUpdate(
+      roomId,
+      {
+        $set: {
+          "lastMessageMeta.text": updatedMessage?.content,
+        },
+      },
+      { new: true } 
+    ).lean();
+  }
+
+
   return {
-    ...updatedMessage,
-    lastMessage: updatedMessage.content
+    message:updatedMessage,
+    shouldUpdateLastMessage: isLastMessage,
+    room:roomLastMessage 
   };
 };
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 export const clearChat = async (byUser: string, roomId: string) => {
   if (!byUser || !roomId) throw new Error("Fields are missing.");
@@ -1073,8 +992,8 @@ export const acceptMessageRequest = async (
     { new: true }
   );
 
-  console.log("room: ",room);
-  
+  console.log("room: ", room);
+
   if (!room) {
     throw new Error(
       "Message request cannot be accepted. Either the room doesn't exist, is not pending, or this user is not allowed to accept."
