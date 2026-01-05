@@ -4,7 +4,7 @@ import { VideoModel } from "./videos.Model";
 import { ChatMember, ChatRoom, Message } from "./chat.Models";
 import { FollowModel } from "./follower.Model";
 import { BlockModel } from "./blockedUser.Model";
-import NotificationModel from "./notification.Model";
+import { NotificationModel } from "./notification.Model";
 const Collections = {
      UserModel,
     PostModel,
@@ -12,9 +12,9 @@ const Collections = {
     ChatRoom,
     Message,
     FollowModel,
-    NotificationModel,
     BlockModel,
-    ChatMember
+    ChatMember,
+    NotificationModel
 
 }
 

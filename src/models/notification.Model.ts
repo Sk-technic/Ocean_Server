@@ -62,9 +62,7 @@ NotificationSchema.index({ user: 1, createdAt: -1 });
 NotificationSchema.index({ user: 1, isRead: 1 });
 NotificationSchema.index({ user: 1, actor: 1, createdAt: -1 });
 
-const NotificationModel = model<INotification>(
+export const NotificationModel = model<INotification>(
   "Notification",
   NotificationSchema
 );
-
-export default NotificationModel

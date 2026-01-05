@@ -15,7 +15,7 @@ COPY . .
 RUN npm run build
 
 # Step 6: Expose port
-EXPOSE 5000
+EXPOSE 8000
 
 # Step 7: Start app
-CMD ["npm", "src/main.ts"]
+CMD ["node", "dist/main.js"]
