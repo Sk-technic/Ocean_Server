@@ -113,7 +113,7 @@ const ChatRoomSchema = new Schema<IChatRoom>(
     status: {
       type: String,
       enum: ["active", "request", "blocked"],
-      default: "active",
+      default: "request",
     },
   },
   { timestamps: true }

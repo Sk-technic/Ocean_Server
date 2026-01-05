@@ -33,10 +33,10 @@ export const SearchQuery = asyncHandler(async (req: Request, res: Response) => {
     res.status(200).json(new ApiResponse(200,result,"find successfull."));
 });
 
-export const GetUser = asyncHandler(async (req:Request,res:Response) => {
-    const result = await userService.GetUser(req)
-        res.status(200).json(new ApiResponse(200,result,"find successfull."));
-})
+// export const GetUser = asyncHandler(async (req:Request,res:Response) => {
+//     const result = await userService.GetUser(req)
+//         res.status(200).json(new ApiResponse(200,result,"find successfull."));
+// })
 
 export const AccountPrivacy = asyncHandler(async (req:Request, res:Response)=>{
     const result = await userService.AccountPrivacy(req)
@@ -56,4 +56,9 @@ export const GetBlockedUsers = asyncHandler(async (req:Request, res:Response)=>{
 export const UnBlockUser = asyncHandler(async (req:Request, res:Response)=>{
     const result = await userService.UnBlockUser(req)
     res.status(200).json(new ApiResponse(200,result,"user unblocked"))
+})
+
+export const getFollowersFollowing = asyncHandler(async (req:Request,res:Response) => {
+    const result = await userService.getFollowersFollowing(req)
+    res.status(200).json(new ApiResponse(200,result,"list fetched"))
 })

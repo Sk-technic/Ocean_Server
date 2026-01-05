@@ -33,3 +33,30 @@ export const publishMessage = async <T = any>(
     throw error; // Let caller handle retry/fallback
   }
 };
+
+
+export const publishGroup = async <T = any>(
+  channel: string,
+  Group: T
+): Promise<void> => {
+  try {
+    if (!redisClient.isOpen) {
+      await redisClient.connect();
+    }
+
+    const payload = JSON.stringify(Group);
+    const result = await redisClient.publish(`${channel}`, payload);
+
+    if (process.env.NODE_ENV !== 'production') {
+      console.log(`[Redis:PUBLISH] ${channel} →`, Group);
+    }
+
+
+    if (result === 0) {
+      console.warn(`[Redis] No subscribers for channel: ${channel}`);
+    }
+  } catch (error) {
+    console.error(`[Redis:PUBLISH ERROR] Channel: ${channel}`, error);
+    throw error;
+  }
+};

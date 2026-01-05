@@ -19,15 +19,13 @@ export interface UploadOptions {
  * @returns secure_url of uploaded file
  */
 
-export const uploadToCloudinary = async (filePath: string,options: UploadOptions = {}): Promise<UploadApiResponse> => {
+export const uploadToCloudinary = async (filePath: string, options: UploadOptions = {}): Promise<UploadApiResponse> => {
   try {
     const result = await cloudinary.uploader.upload(filePath, {
       folder: "UserMedia",
-      resource_type: options.resource_type || "auto",
+      resource_type: (options.resource_type || "auto") as any,
     });
-    
     fs.unlinkSync(filePath);
-
     return result;
   } catch (error) {
     throw new Error(`Cloudinary upload failed: ${error}`);
@@ -41,9 +39,8 @@ export const uploadMediaCloudinary = async (
   try {
     const media = await cloudinary.uploader.upload(filePath, {
       folder: "media",
-      resource_type: options.resource_type || "auto",
+      resource_type: (options.resource_type || "auto") as any,
     });
-
     fs.unlinkSync(filePath);
     return media; // Return single object, not array
   } catch (error) {
@@ -87,8 +84,8 @@ export const deleteFromCloudinary = async (url: string) => {
     // Detect resource type automatically from URL
     const resource_type =
       url.includes("/video/") ? "video" :
-      url.includes("/image/") ? "image" :
-      "raw";  // fallback for pdf, zip, docs, gifs, audio etc.
+        url.includes("/image/") ? "image" :
+          "raw";  // fallback for pdf, zip, docs, gifs, audio etc.
 
     console.log("📂 Detected Resource Type:", resource_type);
 

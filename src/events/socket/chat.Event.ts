@@ -14,6 +14,8 @@ export const registerChatEvents = (
   socket.on("chat:join", async (roomId: string) => {
     socket.join(roomId);
     await RedisHelpers.addUserToRoom(roomId, userId);
+    const updatedCounts = await chatService.readChat(userId, roomId)
+    io.to(userId).emit("room:unread:reset", updatedCounts)
   });
 
 
@@ -36,7 +38,7 @@ export const registerChatEvents = (
       message,
       receivers,
       tempId,
-      senderSocketId
+      senderSocketId,
     });
   });
 
@@ -57,22 +59,14 @@ export const registerChatEvents = (
         messageId: message._id,
       });
 
-      // receiverIds?.forEach((uid) => {
-      //   io.to(uid.toString()).emit("chat:room_updated", {
-      //     roomId,
-      //     shouldUpdateLastMessage,
-      //     message
-      //   });
-      // });
-
       const plainMessage = message.toObject ? message.toObject() : message;
-            const finalRoomId = plainMessage.roomId?.toString() || roomId;
+      const finalRoomId = plainMessage.roomId?.toString() || roomId;
 
       await publishMessage(finalRoomId, {
-          message: plainMessage,
-          room,
-          shouldUpdateLastMessage
-        });
+        message: plainMessage,
+        room,
+        shouldUpdateLastMessage
+      });
 
     } catch (error: any) {
       socket.emit("chat:error", {
@@ -80,7 +74,6 @@ export const registerChatEvents = (
       });
     }
   });
-
 
   socket.on("typing:start", async ({ roomId, user }) => {
     console.log("🚀 Received typing:start:", { roomId, user });
@@ -113,7 +106,7 @@ export const registerChatEvents = (
       const userId = socket.data.identity;
       if (!userId) throw new Error("Unauthorized");
 
-      const {message,room,shouldUpdateLastMessage} = await chatService.editMessage({
+      const { message, room, shouldUpdateLastMessage } = await chatService.editMessage({
         messageId,
         roomId,
         newContent: content,
@@ -146,39 +139,34 @@ export const registerChatEvents = (
   });
 
 
-  socket.on("clear:chat", async ({ byUser, roomId }) => {
+  // socket.on("clear:chat", async ({ byUser, roomId }) => {
 
-    console.log("id's: ", byUser, roomId);
+  //   console.log("id's: ", byUser, roomId);
 
-    await chatService.clearChat(byUser, roomId)
-    io.to(roomId).emit("clear:chat:success", { roomId, byUser });
-  })
-
-  socket.on("room:read", async ({ userId, roomId }) => {
-    const updatedCounts = await chatService.readChat(userId, roomId)
-    io.to(userId).emit("room:unread:reset", updatedCounts)
-  })
-
-  socket.on("message:seen", async ({ userId, roomId, messageId }) => {
-    console.log("message is reading");
-
-    const seenMessages = await chatService.MessageSeenUpdate(userId, roomId, messageId);
-    if (!seenMessages) return;
-    console.log("message: ", JSON.parse(JSON.stringify(seenMessages)));
-
-    const senderId = seenMessages?.sender?._id.toString();
-    io.to(senderId).emit("message:seen:success", seenMessages)
-  })
-
-  // socket.on("accept:message_request", async ({ userId, roomId, createdBy }) => {
-  //   console.log(userId, roomId, createdBy);
-
-  //   if (!userId || !roomId || !createdBy) throw new Error("fields are missing!")
-  //   const result = await chatService.acceptMessageRequest(userId, roomId, createdBy)
-  //   if (result) {
-  //     result?.participants?.map((u) => {
-  //       io.to(u?.user.toString()).emit("accept:message_request:success", result)
-  //     })
-  //   }
+  //   await chatService.clearChat(byUser, roomId)
+  //   io.to(roomId).emit("clear:chat:success", { roomId, byUser });
   // })
+
+  // socket.on("message:seen", async ({ userId, roomId, messageId }) => {
+  //   console.log("message is reading");
+
+  //   const seenMessages = await chatService.MessageSeenUpdate(userId, roomId, messageId);
+  //   if (!seenMessages) return;
+  //   console.log("message: ", JSON.parse(JSON.stringify(seenMessages)));
+
+  //   const senderId = seenMessages?.sender?._id.toString();
+  //   io.to(senderId).emit("message:seen:success", seenMessages)
+  // })
+
+  socket.on("accept:message_request", async ({ userId, roomId, createdBy }) => {
+    console.log("user : ", userId, "room : ", roomId, "createdBy : ", createdBy);
+
+    if (!userId || !roomId || !createdBy) throw new Error("fields are missing!")
+    const result = await chatService.acceptMessageRequest(userId, roomId, createdBy)
+
+    const receivers = result?.receivers
+    if (receivers && result) {
+    receivers.map((u)=>io.to(u?.userId.toString()).emit("accept:message_request:success", result.room))
+    }
+  })
 };

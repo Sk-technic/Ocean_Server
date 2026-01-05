@@ -26,7 +26,7 @@ export interface IMessage extends Document {
   reactions?: Map<string, Types.ObjectId[]>; // 👍 => [userIds]
 
   mentions?: Types.ObjectId[];
-  status:"send"|"pending"|"seen";
+  status: "send" | "pending" | "seen";
   isEdited: boolean;
   isDeleted: boolean;
   deletedFor?: Types.ObjectId[];
@@ -69,23 +69,27 @@ export interface IChatRoom extends Document {
 
 export interface IChatMember extends Document {
   _id: Types.ObjectId;
-
   roomId: Types.ObjectId;
   userId: Types.ObjectId;
-
   role: "member" | "admin";
-
   unreadCount: number;
   lastActive: Date | null;
-
-clearChatAt?:Date|null;
+  clearChatAt?: Date | null;
   isMuted: boolean;
   isArchived: boolean;
   isBlocked: boolean;
-
   joinedAt: Date;
   leftAt?: Date;
-
   createdAt: Date;
   updatedAt: Date;
+}
+
+
+export interface CreateGroupRoomInput {
+  name: string;
+  description?: string;
+  avatar?: string | null;
+  createdBy: string;
+  participants: string[];
+  admins: string[];
 }

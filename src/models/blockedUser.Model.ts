@@ -1,4 +1,4 @@
-import { Schema, model, Types } from "mongoose";
+import { Schema, model } from "mongoose";
 import type { IBlock } from "../interfaces/blocked.interface";
 
 const BlockSchema = new Schema<IBlock>(
@@ -7,19 +7,34 @@ const BlockSchema = new Schema<IBlock>(
       type: Schema.Types.ObjectId,
       ref: "User",
       required: true,
-      index: true,       
+      index: true,
     },
+
     blocked: {
       type: Schema.Types.ObjectId,
       ref: "User",
       required: true,
-      index: true,        
+      index: true,
+    },
+
+    status: {
+      type: String,
+      enum: ["blocked", "muted"],
+      required: true,
+    },
+
+    roomId: {
+      type: Schema.Types.ObjectId,
+      ref: "ChatRoom",
+      default: null,
+      index: true,
     },
   },
-  { timestamps: { createdAt: true, updatedAt: false } }
+  {
+    timestamps: { createdAt: true, updatedAt: false },
+  }
 );
 
-// Prevent duplicate block entries
-BlockSchema.index({ blocker: 1, blocked: 1 }, { unique: true });
+BlockSchema.index({ blocker: 1, blocked: 1, roomId: 1 }, { unique: true });
 
 export const BlockModel = model<IBlock>("Block", BlockSchema);

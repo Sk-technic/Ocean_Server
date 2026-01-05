@@ -1,8 +1,8 @@
 import { addRecoveryEmail, autoLogin, changePassword, getUser, googleAuth, googleCallback, logout, RefreshAccessToken, resendOtp, resetPassword, sendEmailVerification, signIn, signup, verifyOtp, } from "./auth.Services";
-import { editMessage, getMessages, sendMedia, unsendMessage, clearChat, chatRooms, readChat, MessageSeenUpdate, acceptMessageRequest, sendTextMessage } from "./chat.Services";
+import { editMessage, getMessages, sendMedia, unsendMessage, chatRooms, readChat, acceptMessageRequest, sendTextMessage, createGroup, RoomMembers, addAdmin, removeAdmin } from "./chat.Services";
 import { acceptRequest, blockReq, GetMuteUsers, rejectRequest, sendFollow, unblockReq, unfollowUser } from "./follower.Service";
 import { getNotifications, markNotificationsAsRead } from "./notifications";
-import { DeleteCoverImage, DeleteProfileImage, EditCoverImage, EditProfileImage, SearchQuery, UpdateProfile, GetUser, SetOnline, SetAway, updateLastActive, AccountPrivacy, BlockUser, UnBlockUser, GetBlockedUsers } from "./user.Services";
+import { DeleteCoverImage, DeleteProfileImage, EditCoverImage, EditProfileImage, SearchQuery, UpdateProfile, SetOnline, SetAway, updateLastActive, AccountPrivacy, BlockUser, UnBlockUser, GetBlockedUsers, getFollowersFollowing } from "./user.Services";
 
 export const authService = {
     signup,
@@ -28,14 +28,14 @@ export const userService = {
     DeleteProfileImage,
     UpdateProfile,
     SearchQuery,
-    GetUser,
     SetOnline,
     updateLastActive,
     SetAway,
     AccountPrivacy,
     BlockUser,
     GetBlockedUsers,
-    UnBlockUser
+    UnBlockUser,
+    getFollowersFollowing
 }
 
 export const chatService = {
@@ -44,11 +44,13 @@ export const chatService = {
     chatRooms,
     unsendMessage,
     editMessage,
-    clearChat,
     readChat,
-    MessageSeenUpdate,
     acceptMessageRequest,
-    sendTextMessage
+    sendTextMessage,
+    createGroup,
+    RoomMembers,
+    addAdmin,
+    removeAdmin
 }
 
 export const followServices = {

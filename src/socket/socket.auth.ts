@@ -38,7 +38,7 @@ export const socketAuth = async (socket: Socket, next: (err?: Error) => void) =>
     if (!payload?._id) throw new Error("Invalid token payload");
 
     const user = await Collections.UserModel.findById(payload._id)
-      .select("email username fullName")
+      .select("email username fullName profilePic")
       .lean()
       .exec();
 

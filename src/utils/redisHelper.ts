@@ -19,7 +19,7 @@ export const TTL = {
 
 export const RedisHelpers = {
 
-  
+
 
   async setUser(userId: string, userData: any, ttlSeconds = TTL.USER) {
     const key = `cached:user:${userId}`;
@@ -31,69 +31,123 @@ export const RedisHelpers = {
     return safeParse(await redisClient.get(key));
   },
 
-async setUserOnline(userId: string, io: Server) {
-  const countKey = `presence:count:${userId}`;
-  const presenceKey = `user:presence:${userId}`;
+  async setUserOnline(userId: string, io: Server) {
+    const countKey = `presence:count:${userId}`;
+    const presenceKey = `user:presence:${userId}`;
 
-  let count = await redisClient.incr(countKey);
+    let count = await redisClient.incr(countKey);
 
-  // 🔴 SAFETY: Redis restart / stale state
-  if (count === 1) {
-    const now = Date.now().toString();
+    // 🔴 SAFETY: Redis restart / stale state
+    if (count === 1) {
+      const now = Date.now().toString();
 
-    await redisClient.hSet(presenceKey, {
-      status: "online",
-      lastActive: now,
-    });
+      await redisClient.hSet(presenceKey, {
+        status: "online",
+        lastActive: now,
+      });
 
-    await userService.updateLastActive(userId, true);
+      await userService.updateLastActive(userId, true);
 
-    io.emit("user:status:update", {
-      userId,
-      status: "online",
-      lastActive: now,
-    });
+      io.emit("user:status:update", {
+        userId,
+        status: "online",
+        lastActive: now,
+      });
 
-    console.log(`🟢 User online -> ${userId}`);
-  }
-},
+      console.log(`🟢 User online -> ${userId}`);
+    }
+  },
 
 
 
-async setUserOffline(userId: string, io: Server) {
-  const countKey = `presence:count:${userId}`;
-  const presenceKey = `user:presence:${userId}`;
+  async setUserOffline(userId: string, io: Server) {
+    const countKey = `presence:count:${userId}`;
+    const presenceKey = `user:presence:${userId}`;
 
-  let count = await redisClient.decr(countKey);
+    let count = await redisClient.decr(countKey);
 
-  // 🔴 SAFETY: handle negative / invalid count
-  if (count <= 0) {
-    await redisClient.del(countKey);
+    // 🔴 SAFETY: handle negative / invalid count
+    if (count <= 0) {
+      await redisClient.del(countKey);
 
-    const now = Date.now().toString();
+      const now = Date.now().toString();
 
-    await redisClient.hSet(presenceKey, {
-      status: "offline",
-      lastActive: now,
-    });
+      await redisClient.hSet(presenceKey, {
+        status: "offline",
+        lastActive: now,
+      });
 
-    const presence = await userService.updateLastActive(userId, false);
+      const presence = await userService.updateLastActive(userId, false);
 
-    io.emit("user:status:update", {
-      userId,
-      status: "offline",
-      lastActive: presence?.lastActive ?? Number(now),
-    });
+      io.emit("user:status:update", {
+        userId,
+        status: "offline",
+        lastActive: presence?.lastActive ?? Number(now),
+      });
 
-    console.log(`🔴 User offline -> ${userId}`);
-    return;
-  }
+      console.log(`🔴 User offline -> ${userId}`);
+      return;
+    }
 
-  // still has active sockets
-  console.log(
-    `⚠️ User ${userId} still online on ${count} sockets`
-  );
-},
+    // still has active sockets
+    console.log(
+      `⚠️ User ${userId} still online on ${count} sockets`
+    );
+  },
+
+
+  async isUserBusy(userId: string) {
+    return Boolean(await redisClient.get(`call:active:${userId}`));
+  },
+
+  async markUserBusy(userId: string, roomId: string) {
+    const key = `call:active:${userId}`;
+
+    const result = await redisClient.set(
+      key,
+      roomId,
+      { NX: true, EX: 3600 }
+    );
+
+    return result === "OK";
+  },
+
+  async setDMCallMeta(
+    roomId: string,
+    callerId: string,
+    receiverId: string
+  ): Promise<void> {
+    await redisClient.set(
+      `call:dm:${roomId}`,
+      JSON.stringify({
+        callerId,
+        receiverId,
+      }),
+      {
+        EX: 60 * 60, // auto cleanup
+      }
+    );
+  },
+
+ async getDMCallMeta(
+    roomId: string
+  ): Promise<{
+    callerId: string;
+    receiverId: string;
+  } | null> {
+    const raw = await redisClient.get(`call:dm:${roomId}`);
+    if (!raw) return null;
+
+    try {
+      return JSON.parse(raw);
+    } catch {
+      return null;
+    }
+  },
+
+  async clearUserBusy(userId: string) {
+    await redisClient.del(`call:active:${userId}`);
+  },
 
 
 
@@ -139,11 +193,20 @@ async setUserOffline(userId: string, io: Server) {
   },
 
   async addUserToRoom(roomId: string, userId: string) {
+    const prevRoomId = await redisClient.get(`activeRoom:${userId}`);
+    if (prevRoomId && prevRoomId !== roomId) {
+      await redisClient.sRem(`room:users:${prevRoomId}`, userId);
+    }
+    await redisClient.set(`activeRoom:${userId}`, roomId);
     await redisClient.sAdd(`room:users:${roomId}`, userId);
   },
 
   async removeUserFromRoom(roomId: string, userId: string) {
-    await redisClient.sRem(`room:users:${roomId}`, userId);
+    const activeRoomId = await redisClient.get(`activeRoom:${userId}`);
+    if (activeRoomId === roomId) {
+      await redisClient.sRem(`room:users:${roomId}`, userId);
+      await redisClient.del(`activeRoom:${userId}`);
+    }
   },
 
   async getRoomUsers(roomId: string) {

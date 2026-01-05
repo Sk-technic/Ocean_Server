@@ -45,8 +45,6 @@ export const signup = async (data: Request) => {
     throw new ApiError(400, "This email or username is already taken")
   }
 
-  const files = data.files;
-
   const typedFiles = (data.files ?? {}) as FileDictionary;
 
   let profilePicPath = null;

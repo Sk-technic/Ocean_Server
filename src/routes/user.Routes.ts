@@ -16,8 +16,6 @@ UserRoute.route("/updateProfile").put(userController.UpdateProfile);
 
 UserRoute.route("/:query").post(userController.SearchQuery)
 
-UserRoute.route("/:roomId").get(userController.GetUser)
-
 UserRoute.route("/privacy/:userId").post(userController.AccountPrivacy)
 
 UserRoute.route("/block_user/:blockedUser").post(userController.BlockUser)
@@ -25,6 +23,9 @@ UserRoute.route("/block_user/:blockedUser").post(userController.BlockUser)
 UserRoute.route("/block_user/list").get(userController.GetBlockedUsers)
 
 UserRoute.route("/Unblock_user/:blockedUser").delete(userController.UnBlockUser)
+
+UserRoute.route("/followersList").get(userController.getFollowersFollowing)
+
 
 
 export { UserRoute };

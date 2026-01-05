@@ -3,9 +3,13 @@ import { Collections } from "../models";
 import { Request } from "express";
 import { deleteFromCloudinary, optimizeCloudinaryUrl, uploadMediaCloudinary, uploadToCloudinary } from "../utils/cloudinary";
 import mongoose, { Types } from "mongoose";
-import { publishMessage } from "../events/redis/chat.Pub";
+import { publishGroup, publishMessage } from "../events/redis/chat.Pub";
 import { RedisHelpers } from "../utils/redisHelper";
 import { getCloudinaryThumbnailFromUrl } from "../utils/getVideothubnail";
+import { CreateGroupRoomInput } from "../interfaces/chat.interface";
+import { FileDictionary } from "../interfaces/files.interface";
+import { getDbSession } from "../utils/DbSession";
+import { redisClient } from "config/redis";
 
 export const sendTextMessage = async ({
   roomId,
@@ -37,6 +41,7 @@ export const sendTextMessage = async ({
         membersHash,
         createdBy: senderId,
         admins: [],
+        status: "request"
       });
 
       await Collections.ChatMember.insertMany([
@@ -50,6 +55,10 @@ export const sendTextMessage = async ({
 
   if (!room) throw new Error("Room not found");
 
+  if (room?.status == "request" && room.createdBy.toString() !== senderId) {
+    throw Error("you can accept the chat first.")
+  }
+
   const message = await Collections.Message.create({
     roomId: room._id,
     sender: senderId,
@@ -59,16 +68,16 @@ export const sendTextMessage = async ({
     ...(replyTo ? { replyTo } : {}),
   });
 
-const extractedMessage = await Collections.Message.findById(message._id)
-  .populate("sender", "_id username fullName profilePic")
-  .populate({
-    path: "replyTo",
-    select: "_id content sender type media createdAt",
-    populate: {
-      path: "sender",
-      select: "_id username fullName profilePic",
-    },
-  });
+  const extractedMessage = await Collections.Message.findById(message._id)
+    .populate("sender", "_id username fullName profilePic")
+    .populate({
+      path: "replyTo",
+      select: "_id content sender type media createdAt",
+      populate: {
+        path: "sender",
+        select: "_id username fullName profilePic",
+      },
+    });
 
   await Collections.ChatRoom.updateOne(
     { _id: room._id },
@@ -81,16 +90,29 @@ const extractedMessage = await Collections.Message.findById(message._id)
       },
     }
   );
+  const activeUserIds = await RedisHelpers.getRoomUsers(room._id.toString());
+
 
   await Collections.ChatMember.updateMany(
-    { roomId: room._id, userId: { $ne: senderId } },
-    { $inc: { unreadCount: 1 } }
+    {
+      roomId: room._id,
+      userId: {
+        $ne: senderId,
+        $nin: activeUserIds,
+      },
+    },
+    {
+      $inc: { unreadCount: 1 },
+    }
   );
+  let receivers = null
+  if (room.type == "dm") {
 
-  const receivers = await Collections.ChatMember.find({
-    roomId: room._id,
-  }).distinct("userId");
+    receivers = await Collections.ChatMember.find({
+      roomId: room._id,
+    }).distinct("userId");
 
+  }
 
   let roomResponse: any = room.toObject();
 
@@ -161,7 +183,7 @@ const extractedMessage = await Collections.Message.findById(message._id)
     receivers,
     senderSocketId,
     tempId,
-    toUserId:toUserId ? toUserId :null
+    toUserId: toUserId ? toUserId : null
   };
 };
 
@@ -227,6 +249,10 @@ export const sendMedia = async (req: Request) => {
     })
   );
 
+  if (room?.status == "request" && room.createdBy.toString() !== senderId) {
+    throw Error("you can accept the chat first.")
+  }
+
   const message = await Collections.Message.create({
     roomId: room._id,
     sender: senderId,
@@ -256,27 +282,40 @@ export const sendMedia = async (req: Request) => {
     }
   );
 
-  await Collections.ChatMember.updateMany(
-    { roomId: room._id, userId: { $ne: senderId } },
-    { $inc: { unreadCount: 1 } }
-  );
+  const activeUserIds = await RedisHelpers.getRoomUsers(room._id.toString());
 
-  const receivers = await Collections.ChatMember.find({
-    roomId: room._id,
-  }).distinct("userId");
+
+  await Collections.ChatMember.updateMany(
+    {
+      roomId: room._id,
+      userId: {
+        $ne: senderId,
+        $nin: activeUserIds,
+      },
+    },
+    {
+      $inc: { unreadCount: 1 },
+    }
+  );
+  let receivers = null
+  if (room.type == "dm") {
+    receivers = await Collections.ChatMember.find({
+      roomId: room._id,
+    }).distinct("userId");
+  }
 
   const refreshedRoom = await Collections.ChatRoom.findById(room._id).lean();
 
-const extractedMessage = await Collections.Message.findById(message._id)
-  .populate("sender", "_id username fullName profilePic")
-  .populate({
-    path: "replyTo",
-    select: "_id content sender type media createdAt",
-    populate: {
-      path: "sender",
-      select: "_id username fullName profilePic",
-    },
-  });
+  const extractedMessage = await Collections.Message.findById(message._id)
+    .populate("sender", "_id username fullName profilePic")
+    .populate({
+      path: "replyTo",
+      select: "_id content sender type media createdAt",
+      populate: {
+        path: "sender",
+        select: "_id username fullName profilePic",
+      },
+    });
 
   let roomResponse: any = refreshedRoom;
 
@@ -349,10 +388,9 @@ const extractedMessage = await Collections.Message.findById(message._id)
     tempId,
     senderSocketId,
     effectiveRoomId,
-    toUserId:toUserId ?toUserId:null
+    toUserId: toUserId ? toUserId : null
   });
 };
-
 
 export const getMessages = async (req: Request) => {
   const { roomId } = req.params;
@@ -365,7 +403,7 @@ export const getMessages = async (req: Request) => {
   const userId = req.identity;
   const limitNum = Number(limit) || 50;
 
- 
+
   const andConditions: any[] = [{ roomId }];
 
   const member = await Collections.ChatMember.findOne({
@@ -460,15 +498,12 @@ export const getMessages = async (req: Request) => {
   };
 };
 
-
-
 export const chatRooms = async (req: Request) => {
   const { id, cursor } = req.query;
   if (!id) throw new ApiError(403, "User ID not provided.");
 
   const userId = new mongoose.Types.ObjectId(String(id));
   const limit = 10;
-
   const cursorDate = cursor ? new Date(String(cursor)) : null;
 
   const pipeline: any[] = [
@@ -486,9 +521,15 @@ export const chatRooms = async (req: Request) => {
 
     {
       $match: {
-        "room.lastMessageMeta.text": { $exists: true, $ne: "" },
+        $or: [{ "room.type": "group" }, { "room.type": "dm" }],
         ...(cursorDate && {
-          "room.lastMessageMeta.createdAt": { $lt: cursorDate },
+          $or: [
+            { "room.lastMessageMeta.createdAt": { $lt: cursorDate } },
+            {
+              "room.type": "group",
+              "room.lastMessageMeta": { $exists: false },
+            },
+          ],
         }),
       },
     },
@@ -522,31 +563,36 @@ export const chatRooms = async (req: Request) => {
         createdBy: "$room.createdBy",
         status: "$room.status",
         lastMessageMeta: "$room.lastMessageMeta",
-
         unreadCount: "$unreadCount",
         isMuted: "$isMuted",
         isArchived: "$isArchived",
 
         participants: {
-          $map: {
-            input: "$members",
-            as: "m",
-            in: {
-              _id: "$$m.userId",
-              unreadCount: "$$m.unreadCount",
-              isMuted: "$$m.isMuted",
-              isArchived: "$$m.isArchived",
-              user: {
-                $arrayElemAt: [
-                  {
-                    $filter: {
-                      input: "$users",
-                      as: "u",
-                      cond: { $eq: ["$$u._id", "$$m.userId"] },
-                    },
+          $cond: {
+            if: { $eq: ["$room.type", "group"] },
+            then: [],
+            else: {
+              $map: {
+                input: "$members",
+                as: "m",
+                in: {
+                  _id: "$$m.userId",
+                  unreadCount: "$$m.unreadCount",
+                  isMuted: "$$m.isMuted",
+                  isArchived: "$$m.isArchived",
+                  user: {
+                    $arrayElemAt: [
+                      {
+                        $filter: {
+                          input: "$users",
+                          as: "u",
+                          cond: { $eq: ["$$u._id", "$$m.userId"] },
+                        },
+                      },
+                      0,
+                    ],
                   },
-                  0,
-                ],
+                },
               },
             },
           },
@@ -557,19 +603,25 @@ export const chatRooms = async (req: Request) => {
     {
       $addFields: {
         participants: {
-          $map: {
-            input: "$participants",
-            as: "p",
-            in: {
-              _id: "$$p._id",
-              username: "$$p.user.username",
-              fullName: "$$p.user.fullName",
-              profilePic: "$$p.user.profilePic",
-              email: "$$p.user.email",
-              unreadCount: "$$p.unreadCount",
-              isMuted: "$$p.isMuted",
-              isArchived: "$$p.isArchived",
-              lastActive: "$$p.user.lastActive",
+          $cond: {
+            if: { $eq: ["$type", "group"] },
+            then: [],
+            else: {
+              $map: {
+                input: "$participants",
+                as: "p",
+                in: {
+                  _id: "$$p._id",
+                  username: "$$p.user.username",
+                  fullName: "$$p.user.fullName",
+                  profilePic: "$$p.user.profilePic",
+                  email: "$$p.user.email",
+                  unreadCount: "$$p.unreadCount",
+                  isMuted: "$$p.isMuted",
+                  isArchived: "$$p.isArchived",
+                  lastActive: "$$p.user.lastActive",
+                },
+              },
             },
           },
         },
@@ -591,20 +643,36 @@ export const chatRooms = async (req: Request) => {
 
   const [blockedByMe, blockedMe] = await Promise.all([
     Collections.BlockModel.find(
-      { blocker: userId },
-      { blocked: 1 }
+      { blocker: userId, status: { $in: ["blocked", "muted"] } },
+      { blocked: 1, status: 1 }
     ).lean(),
+
     Collections.BlockModel.find(
-      { blocked: userId },
+      { blocked: userId, status: "blocked" },
       { blocker: 1 }
     ).lean(),
   ]);
 
-  const blockedByMeSet = new Set(blockedByMe.map((b) => b.blocked.toString()));
-  const blockedMeSet = new Set(blockedMe.map((b) => b.blocker.toString()));
+  const blockedByMeSet = new Set(
+    blockedByMe
+      .filter(b => b.status === "blocked")
+      .map(b => b.blocked.toString())
+  );
+
+  const mutedByMeSet = new Set(
+    blockedByMe
+      .filter(b => b.status === "muted")
+      .map(b => b.blocked.toString())
+  );
+
+  const blockedMeSet = new Set(
+    blockedMe.map(b => b.blocker.toString())
+  );
 
   const allParticipantIds = slicedRooms.flatMap((room: any) =>
-    room.participants.map((p: any) => p._id.toString())
+    room.type === "dm"
+      ? room.participants.map((p: any) => p._id.toString())
+      : []
   );
 
   const presenceData =
@@ -615,6 +683,14 @@ export const chatRooms = async (req: Request) => {
   );
 
   const enrichedRooms = slicedRooms.map((room: any) => {
+    if (room.type === "group") {
+      return {
+        ...room,
+        blockedMe: false,
+        participants: [],
+      };
+    }
+
     const blockedMeInRoom = room.participants.some(
       (p: any) =>
         blockedMeSet.has(p._id.toString()) &&
@@ -625,12 +701,8 @@ export const chatRooms = async (req: Request) => {
       ...room,
       blockedMe: blockedMeInRoom,
       participants: room.participants.map((p: any) => {
-        const presence = presenceMap.get(p._id.toString());
-
-        const isBlocked =
-          room.type === "dm" &&
-          blockedByMeSet.has(p._id.toString()) &&
-          p._id.toString() !== userId.toString();
+        const pid = p._id.toString();
+        const presence = presenceMap.get(pid);
 
         return {
           ...p,
@@ -640,7 +712,10 @@ export const chatRooms = async (req: Request) => {
             : presence?.lastActive
               ? new Date(Number(presence.lastActive))
               : p.lastActive ?? null,
-          isBlocked,
+          isBlocked:
+            blockedByMeSet.has(pid) && pid !== userId.toString(),
+          isMuted:
+            mutedByMeSet.has(pid) && pid !== userId.toString(),
         };
       }),
     };
@@ -705,8 +780,8 @@ export const unsendMessage = async ({
 
   const isLastMessage =
     room?.lastMessageMeta?.messageId?.toString() === messageId;
-let roomLastMessage
-if (isLastMessage) {
+  let roomLastMessage
+  if (isLastMessage) {
     roomLastMessage = await Collections.ChatRoom.findByIdAndUpdate(
       roomId,
       {
@@ -714,14 +789,14 @@ if (isLastMessage) {
           "lastMessageMeta.text": deletedText,
         },
       },
-      { new: true } 
+      { new: true }
     ).lean();
   }
 
   return {
-    room:roomLastMessage,
+    room: roomLastMessage,
     message: updatedMessage,
-    shouldUpdateLastMessage: isLastMessage, 
+    shouldUpdateLastMessage: isLastMessage,
   };
 };
 
@@ -776,8 +851,8 @@ export const editMessage = async ({
   if (!room) throw new Error("Room not found");
 
   const isLastMessage = room.lastMessageMeta?.messageId?.toString() === updatedMessage._id.toString();
-let roomLastMessage
-if (isLastMessage) {
+  let roomLastMessage
+  if (isLastMessage) {
     roomLastMessage = await Collections.ChatRoom.findByIdAndUpdate(
       roomId,
       {
@@ -785,182 +860,58 @@ if (isLastMessage) {
           "lastMessageMeta.text": updatedMessage?.content,
         },
       },
-      { new: true } 
+      { new: true }
     ).lean();
   }
 
 
   return {
-    message:updatedMessage,
+    message: updatedMessage,
     shouldUpdateLastMessage: isLastMessage,
-    room:roomLastMessage 
+    room: roomLastMessage
   };
 };
 
+// export const clearChat = async (byUser: string, roomId: string) => {
+//   if (!byUser || !roomId) throw new Error("Fields are missing.");
 
+//   const room = await Collections.ChatRoom.findById(roomId);
+//   if (!room) throw new Error("Room not found.");
+//   if (room.type == "group") throw new Error("You cannot clear chat in a group.");
 
+//   if (!room.clearChat) {
+//     room.clearChat = [];
+//   }
 
+//   room.clearChat = room.clearChat.filter(
+//     c => c.byUser.toString() !== byUser.toString()
+//   );
 
+//   room.clearChat.push({
+//     byUser,
+//     lastClearAt: new Date()
+//   });
 
+//   await room.save();
 
-
-
-
-
-
-
-
-export const clearChat = async (byUser: string, roomId: string) => {
-  if (!byUser || !roomId) throw new Error("Fields are missing.");
-
-  const room = await Collections.ChatRoom.findById(roomId);
-  if (!room) throw new Error("Room not found.");
-  if (room.isGroup) throw new Error("You cannot clear chat in a group.");
-
-  if (!room.clearChat) {
-    room.clearChat = [];
-  }
-
-  room.clearChat = room.clearChat.filter(
-    c => c.byUser.toString() !== byUser.toString()
-  );
-
-  room.clearChat.push({
-    byUser,
-    lastClearAt: new Date()
-  });
-
-  await room.save();
-
-  return room._id;
-};
+//   return room._id;
+// };
 
 export const readChat = async (userId: string, roomId: string) => {
-  const roomDetails = await Collections.ChatRoom.findById(roomId)
-  if (roomDetails?.status == "request") return
-
-  await Collections.ChatRoom.updateOne(
-    { _id: roomId, "participants.user": userId },
+  const result = await Collections.ChatMember.findOneAndUpdate(
+    { userId, roomId },
     {
-      $set: {
-        "participants.$.unreadCount": 0,
-        "participants.$.lastSeenAt": new Date()
-      }
-    }
+      unreadCount: 0,
+      lastActive: new Date(),
+    },
+    { new: true }
   );
 
-  const updatedRoom = await Collections.ChatRoom.findById(roomId).lean();
-
-  return updatedRoom
-
-}
-
-export const MessageSeenUpdate = async (
-  userId: string,
-  roomId: string,
-  messageId: string
-) => {
-  const roomDetails = await Collections.ChatRoom.findById(roomId);
-  if (roomDetails?.status == "request") return;
-  const message = await Collections.Message.findById(messageId);
-
-  if (!message) throw new Error("Message not found");
-
-  const userObjectId = new mongoose.Types.ObjectId(userId);
-
-  // STEP 1: Check if user already exists in seenBy
-  const alreadySeen = message?.seenBy?.some(
-    (entry: any) => entry.user.toString() === userId
-  );
-
-  // STEP 2: Add only 1 time
-  if (!alreadySeen) {
-    await Collections.Message.updateOne(
-      { _id: messageId },
-      {
-        $push: {
-          seenBy: {
-            user: userObjectId,
-            time: Date.now(), // First-time only
-          },
-        },
-      }
-    );
+  if (!result) {
+    throw new Error("You are not a member of this room.");
   }
 
-  // STEP 3: UNIVERSAL status update (Group + Private)
-  const totalMembers = roomDetails?.participants.length ?? 0;
-
-  const msgAfter = alreadySeen
-    ? message
-    : await Collections.Message.findById(messageId);
-
-  if ((msgAfter?.seenBy?.length ?? 0) === totalMembers) {
-    await Collections.Message.updateOne(
-      { _id: messageId },
-      { $set: { status: "seen" } }
-    );
-  }
-
-  // STEP 4: Final populated message
-  const finalMessage = await Collections.Message.aggregate([
-    { $match: { _id: new mongoose.Types.ObjectId(messageId) } },
-
-    {
-      $lookup: {
-        from: "users",
-        localField: "sender",
-        foreignField: "_id",
-        as: "senderData",
-      },
-    },
-    { $unwind: "$senderData" },
-
-    { $unwind: { path: "$seenBy", preserveNullAndEmptyArrays: true } },
-
-    {
-      $lookup: {
-        from: "users",
-        localField: "seenBy.user",
-        foreignField: "_id",
-        as: "userData",
-      },
-    },
-    { $unwind: { path: "$userData", preserveNullAndEmptyArrays: true } },
-
-    {
-      $group: {
-        _id: "$_id",
-        content: { $first: "$content" },
-        roomId: { $first: "$roomId" },
-        status: { $first: "$status" },
-        createdAt: { $first: "$createdAt" },
-
-        sender: {
-          $first: {
-            _id: "$senderData._id",
-            fullName: "$senderData.fullName",
-            username: "$senderData.username",
-            email: "$senderData.email",
-            profilePic: "$senderData.profilePic",
-          },
-        },
-
-        seenBy: {
-          $push: {
-            user: {
-              _id: "$userData._id",
-              fullName: "$userData.fullName",
-              profilePic: "$userData.profilePic",
-            },
-            time: "$seenBy.time",
-          },
-        },
-      },
-    },
-  ]);
-
-  return finalMessage[0];
+  return true;
 };
 
 export const acceptMessageRequest = async (
@@ -981,10 +932,9 @@ export const acceptMessageRequest = async (
   const room = await Collections.ChatRoom.findOneAndUpdate(
     {
       _id: roomId,
-      isGroup: false,
+      type: "dm",
       createdBy: createdBy,
       status: "request",
-      "participants.user": userId,
     },
     {
       $set: { status: "active" }
@@ -992,13 +942,333 @@ export const acceptMessageRequest = async (
     { new: true }
   );
 
-  console.log("room: ", room);
-
   if (!room) {
     throw new Error(
       "Message request cannot be accepted. Either the room doesn't exist, is not pending, or this user is not allowed to accept."
     );
   }
 
-  return room;
+  const receivers = await Collections.ChatMember.find({ roomId: room?._id }).select("userId")
+
+  console.log(receivers);
+
+
+  return { room, receivers };
 };
+
+export const createGroup = async (req: Request) => {
+  const isProduction = process.env.NODE_ENV === "production";
+  const { session } = isProduction ? await getDbSession() : { session: null };
+
+  if (isProduction && session) {
+    session.startTransaction();
+  }
+
+  try {
+    const { name, description, createdBy } = req.body;
+    const participants: string[] = JSON.parse(req.body.participants || "[]");
+    const admins: string[] = JSON.parse(req.body.admins || "[]");
+
+    if (!participants.length) throw new Error("Participants are required");
+
+    if (!participants.includes(createdBy)) participants.push(createdBy);
+    if (!admins.includes(createdBy)) admins.push(createdBy);
+
+    let avatarUrl: string | null = null;
+    if (req.file?.path) { // .single("avatar") puts file in req.file
+      const uploaded = await uploadToCloudinary(req.file.path);
+      avatarUrl = uploaded.url;
+    }
+
+    const roomArray = await Collections.ChatRoom.create(
+      [
+        {
+          type: "group",
+          name,
+          description,
+          avatar: avatarUrl,
+          createdBy,
+          admins,
+          status: "active",
+        },
+      ],
+      isProduction ? { session } : undefined
+    );
+
+    const room = roomArray[0];
+    const roomId = room._id;
+
+    const members = participants.map((userId) => ({
+      roomId,
+      userId,
+      role: admins.includes(userId) ? "admin" : "member",
+      joinedAt: new Date(),
+    }));
+
+    await Collections.ChatMember.insertMany(
+      members,
+      isProduction ? { session, ordered: false } : { ordered: false }
+    );
+
+    if (isProduction && session) {
+      await session.commitTransaction();
+    }
+
+    const redisPayload = {
+      room: room,
+      recipientIds: participants
+    };
+
+    await publishGroup("NEW_GROUP_CREATED", redisPayload)
+
+    return redisPayload;
+
+  } catch (error) {
+    if (isProduction && session) {
+      await session.abortTransaction();
+    }
+    throw error;
+  } finally {
+    if (isProduction && session) {
+      session.endSession();
+    }
+  }
+};
+
+export const RoomMembers = async (req: Request) => {
+  const { roomId } = req.params;
+  const { cursor } = req.query;
+  const loggedInUser = req.identity;
+
+  if (!roomId) {
+    throw new ApiError(400, "roomId not found.");
+  }
+
+  const limit = 10;
+  const parsedCursor = cursor ? JSON.parse(String(cursor)) : null;
+
+  const pipeline: any[] = [
+    {
+      $match: {
+        roomId: new mongoose.Types.ObjectId(roomId),
+        ...(parsedCursor && {
+          $or: [
+            { joinedAt: { $lt: new Date(parsedCursor.joinedAt) } },
+            {
+              joinedAt: new Date(parsedCursor.joinedAt),
+              _id: { $lt: new mongoose.Types.ObjectId(parsedCursor._id) },
+            },
+          ],
+        }),
+      },
+    },
+
+    {
+      $sort: {
+        joinedAt: -1,
+        _id: -1,
+      },
+    },
+
+    { $limit: limit + 1 },
+
+    {
+      $lookup: {
+        from: "users",
+        localField: "userId",
+        foreignField: "_id",
+        as: "user",
+      },
+    },
+    { $unwind: "$user" },
+
+    {
+      $lookup: {
+        from: "blocks",
+        let: { memberId: "$user._id" },
+        pipeline: [
+          {
+            $match: {
+              $expr: {
+                $and: [
+                  { $eq: ["$blocker", new mongoose.Types.ObjectId(loggedInUser)] },
+                  { $eq: ["$blocked", "$$memberId"] },
+                  {
+                    $or: [
+                      { $eq: ["$roomId", null] },
+                      { $eq: ["$roomId", new mongoose.Types.ObjectId(roomId)] },
+                    ],
+                  },
+                ],
+              },
+            },
+          },
+          { $project: { status: 1 } },
+        ],
+        as: "blockInfo",
+      },
+    },
+
+    {
+      $addFields: {
+        isBlocked: { $in: ["blocked", "$blockInfo.status"] },
+        isMuted: { $in: ["muted", "$blockInfo.status"] },
+      },
+    },
+
+    {
+      $project: {
+        joinedAt: 1,
+        role: 1,
+        id: "$user._id",
+        username: "$user.username",
+        fullName: "$user.fullName",
+        email: "$user.email",
+        profilePic: "$user.profilePic",
+        isBlocked: 1,
+        isMuted: 1,
+      },
+    },
+  ];
+
+  const members = await Collections.ChatMember.aggregate(pipeline);
+
+  const hasNext = members.length > limit;
+  const sliced = hasNext ? members.slice(0, limit) : members;
+  const last = sliced[sliced.length - 1];
+
+  const totalUsers = await Collections.ChatMember.countDocuments({
+    roomId: new mongoose.Types.ObjectId(roomId),
+  });
+
+  return {
+    data: sliced.map(({ joinedAt, ...member }) => member),
+    nextCursor: hasNext
+      ? {
+          joinedAt: last.joinedAt,
+          _id: last._id,
+        }
+      : null,
+    hasNext,
+    totalUsers,
+  };
+};
+
+
+export const addAdmin = async (req: Request) => {
+  const { user, roomId } = req.body;
+  const me = req.identity;
+
+  if (!me) {
+    throw new ApiError(401, "Unauthorized");
+  }
+
+  if (!user || !roomId) {
+    throw new ApiError(400, "userId and roomId are required");
+  }
+
+  const room = await Collections.ChatRoom.findById(roomId);
+  if (!room) {
+    throw new ApiError(404, "Room not found");
+  }
+
+  const exist = await Collections.UserModel.findById(user);
+  if (!exist) {
+    throw new ApiError(404, "User not found");
+  }
+
+  const meMember = await Collections.ChatMember.findOne({
+    userId: me,
+    roomId,
+  });
+
+  if (!meMember || meMember.role !== "admin") {
+    throw new ApiError(403, "Only admins can add other admins");
+  }
+
+  const targetMember = await Collections.ChatMember.findOne({
+    userId: user,
+    roomId,
+  });
+
+  if (!targetMember) {
+    throw new ApiError(404, "User is not a member of this group");
+  }
+
+  if (targetMember.role === "admin") {
+    throw new ApiError(400, "User is already an admin");
+  }
+
+  await Collections.ChatMember.updateOne(
+    { userId: user, roomId },
+    { $set: { role: "admin" } }
+  );
+
+  return true;
+};
+
+export const removeAdmin = async (req: Request) => {
+  const { user, roomId } = req.body;
+  const me = req.identity;
+
+  if (!me) {
+    throw new ApiError(401, "Unauthorized");
+  }
+
+  if (!user || !roomId) {
+    throw new ApiError(400, "userId and roomId are required");
+  }
+
+  const room = await Collections.ChatRoom.findById(roomId);
+  if (!room) {
+    throw new ApiError(404, "Room not found");
+  }
+
+  const exist = await Collections.UserModel.findById(user);
+  if (!exist) {
+    throw new ApiError(404, "User not found");
+  }
+
+  const meMember = await Collections.ChatMember.findOne({
+    userId: me,
+    roomId,
+  });
+
+  if (!meMember || meMember.role !== "admin") {
+    throw new ApiError(403, "Only admins can remove admins");
+  }
+
+  const targetMember = await Collections.ChatMember.findOne({
+    userId: user,
+    roomId,
+  });
+
+  if (!targetMember) {
+    throw new ApiError(404, "User is not a member of this group");
+  }
+
+  if (me.toString() === user.toString()) {
+    throw new ApiError(400, "You cannot remove yourself as admin");
+  }
+
+  if (targetMember.role !== "admin") {
+    throw new ApiError(400, "User is not an admin");
+  }
+
+  const adminCount = await Collections.ChatMember.countDocuments({
+    roomId,
+    role: "admin",
+  });
+
+  if (adminCount <= 1) {
+    throw new ApiError(400, "At least one admin must remain in the group");
+  }
+
+  await Collections.ChatMember.updateOne(
+    { userId: user, roomId },
+    { $set: { role: "member" } }
+  );
+
+  return true;
+};
+

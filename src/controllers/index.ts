@@ -1,8 +1,8 @@
 import { addRecoveryEmail, autoLogin, changePassword, getUser, googleAuth, googleCallback, logout, RefreshAccessToken, resendOTP, resetPassword, sendEmailVerification, signIn, signup, verifyOtp } from "./auth.Controllers";
-import { GetMessages, GetChatUsers, getRoomDetails, SendMedia } from "./chat.Controllers";
+import { GetMessages, GetChatUsers, SendMedia, createGroup, roomMembersList, addAdmin, removeAdmin } from "./chat.Controllers";
 import { AcceptRequest, BlockReq, followRequest, RequestReject, UnFollowUser, GetMuteUsers, UnBlockReq } from "./follower.Controllers";
 import { GetNotifications, markNotificationsAsRead } from "./notifications.Controllers";
-import { AccountPrivacy, DeleteCoverImage, DeleteProfileImage, EditCoverImage, EditProfileImage, GetUser, SearchQuery, UpdateProfile, BlockUser, UnBlockUser, GetBlockedUsers } from "./user.Controllers";
+import { AccountPrivacy, DeleteCoverImage, DeleteProfileImage, EditCoverImage, EditProfileImage, SearchQuery, UpdateProfile, BlockUser, UnBlockUser, GetBlockedUsers, getFollowersFollowing } from "./user.Controllers";
 
 export const authController = {
     signup,
@@ -28,18 +28,21 @@ export const userController = {
     DeleteProfileImage,
     UpdateProfile,
     SearchQuery,
-    GetUser,
     AccountPrivacy,
     BlockUser,
     GetBlockedUsers,
-    UnBlockUser
+    UnBlockUser,
+    getFollowersFollowing
 }
 
 export const chatController = {
     GetMessages,
     GetChatUsers,
-    getRoomDetails,
-    SendMedia
+    SendMedia,
+    createGroup,
+    roomMembersList,
+    addAdmin,
+    removeAdmin
 }
 
 export const followController = {

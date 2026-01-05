@@ -2,10 +2,20 @@ import { Request } from "express";
 import { FileDictionary } from "../interfaces/files.interface";
 import { Collections } from "../models";
 import { optimizeCloudinaryUrl, uploadToCloudinary } from "../utils/cloudinary";
-import { ApiError } from "../utils/ApiError"; // Assuming this exists
 import { IUpdateUser } from "../interfaces/user.Interface";
 import { RedisHelpers } from "../utils/redisHelper";
+import { ApiError } from "../utils/ApiError";
 import mongoose from "mongoose";
+type GetFollowListParams = {
+  userId: string;          // profile owner
+  viewerId: string;        // logged-in user
+  type: "followers" | "following";
+  cursor?: {
+    createdAt: string;
+    _id: string;
+  };
+};
+
 
 export const EditCoverImage = async (req: Request) => {
   const files = req.files as FileDictionary | undefined;
@@ -292,7 +302,7 @@ export const SearchQuery = async (req: Request) => {
         isemailVerified: 1,
         isPrivate: 1,
         relevanceScore: 1,
-        socialLinks:1
+        socialLinks: 1
       },
     },
 
@@ -361,40 +371,40 @@ export const SearchQuery = async (req: Request) => {
   return optimizedUsers;
 };
 
-export const GetUser = async (req: Request) => {
-  const { roomId } = req.params;
-  const loggedInUserId = req.identity
+// export const GetUser = async (req: Request) => {
+//   const { roomId } = req.params;
+//   const loggedInUserId = req.identity
 
-  if (!roomId) throw new ApiError(403, "Room ID not provided");
+//   if (!roomId) throw new ApiError(403, "Room ID not provided");
 
-  const cacheKey = `room:user:${roomId}:${loggedInUserId}`;
+//   const cacheKey = `room:user:${roomId}:${loggedInUserId}`;
 
-  const cached = await RedisHelpers.getUser(cacheKey);
-  if (cached) {
-    console.log("Cache hit:", cacheKey);
-    return cached
-  }
+//   const cached = await RedisHelpers.getUser(cacheKey);
+//   if (cached) {
+//     console.log("Cache hit:", cacheKey);
+//     return cached
+//   }
 
-  console.log("💾 Cache miss — fetching from DB...");
+//   console.log("💾 Cache miss — fetching from DB...");
 
-  const room = await Collections.ChatRoom.findById(roomId)
-    .populate({
-      path: "participants",
-      select: "_id firstName lastName username profileImage bio",
-    })
-    .lean();
+//   const room = await Collections.ChatRoom.findById(roomId)
+//     .populate({
+//       path: "participants",
+//       select: "_id firstName lastName username profileImage bio",
+//     })
+//     .lean();
 
-  if (!room) throw new ApiError(404, "Room not found");
-  const filterUser = room.participants.filter(
-    (p) => p?.user.toString() !== loggedInUserId.toString()
-  );
+//   if (!room) throw new ApiError(404, "Room not found");
+//   const filterUser = room?.participants.filter(
+//     (p) => p?.user.toString() !== loggedInUserId.toString()
+//   );
 
-  if (!filterUser) throw new ApiError(404, "Other user not found in room");
+//   if (!filterUser) throw new ApiError(404, "Other user not found in room");
 
-  await RedisHelpers.setUser(cacheKey, JSON.stringify(filterUser), 60 * 10);
+//   await RedisHelpers.setUser(cacheKey, JSON.stringify(filterUser), 60 * 10);
 
-  return filterUser;
-};
+//   return filterUser;
+// };
 
 export const SetOnline = async (userId: string) => {
   const user = await Collections.UserModel.findByIdAndUpdate(
@@ -432,9 +442,6 @@ export const updateLastActive = async (userId: string, isOnline: boolean) => {
     { lastActive: isOnline ? null : Date.now() },
     { new: true }
   );
-
-  
-
   return presence
 };
 
@@ -467,6 +474,9 @@ export const AccountPrivacy = async (req: Request) => {
 
 export const BlockUser = async (req: Request) => {
   const blockedUser = req.params.blockedUser;
+  const blocker = req.identity;
+  const roomId = req.body.roomId ?? null;
+  const set: "blocked" | "muted" = req.body.set;
 
   if (!blockedUser) {
     throw new ApiError(400, "User ID missing.");
@@ -476,8 +486,12 @@ export const BlockUser = async (req: Request) => {
     throw new ApiError(400, "Invalid user ID.");
   }
 
-  if (req.identity.toString() === blockedUser) {
+  if (blocker.toString() === blockedUser) {
     throw new ApiError(400, "You cannot block yourself.");
+  }
+
+  if (!["blocked", "muted"].includes(set)) {
+    throw new ApiError(400, "Invalid action type.");
   }
 
   const userExists = await Collections.UserModel.exists({
@@ -489,15 +503,57 @@ export const BlockUser = async (req: Request) => {
     throw new ApiError(404, "User not found.");
   }
 
-    await Collections.BlockModel.create({
-      blocker: req.identity,
-      blocked: blockedUser,
-    });
+  const existing = await Collections.BlockModel.findOne({
+    blocker,
+    blocked: blockedUser,
+    roomId,
+  });
+
+  if (existing && existing.status === set) {
+    throw new ApiError(
+      400,
+      `User is already ${set === "blocked" ? "blocked" : "muted"}.`
+    );
+  }
+
+  if (existing && existing.status === "blocked" && set === "muted") {
+    throw new ApiError(400, "Blocked user cannot be muted.");
+  }
+
+  if (existing && existing.status === "muted" && set === "blocked") {
+    existing.status = "blocked";
+    await existing.save();
 
     return {
       message: "User blocked successfully.",
-      alreadyBlocked: false,
+      updated: true,
     };
+  }
+
+  await Collections.BlockModel.create({
+    blocker,
+    blocked: blockedUser,
+    status: set,
+    roomId,
+  });
+
+const members = [req.identity, blockedUser].sort(); 
+const membersHash = members.join("_");
+const dmRoom = await Collections.ChatRoom.findOne({
+  type: "dm",
+  membersHash
+}); 
+
+return {
+    message:
+      set === "blocked"
+        ? "User blocked successfully."
+        : "User muted successfully.",
+    created: true,
+    status:set,
+    roomId,
+    dmRoom:dmRoom?._id.toString()||null
+  };
 };
 
 export const GetBlockedUsers = async (req: Request) => {
@@ -507,38 +563,46 @@ export const GetBlockedUsers = async (req: Request) => {
 
   const query: any = {
     blocker: blockerId,
+    status: { $in: ["blocked", "muted"] },
   };
 
   if (cursor && mongoose.Types.ObjectId.isValid(cursor)) {
     query._id = { $lt: new mongoose.Types.ObjectId(cursor) };
   }
 
-  const blockedUsers = await Collections.BlockModel.find(query)
+  const records = await Collections.BlockModel.find(query)
     .sort({ _id: -1 })
     .limit(limit + 1)
     .populate({
       path: "blocked",
       select: "username fullName profilePic bio",
-    }).select("-__v");
+    })
+    .select("blocked status roomId createdAt");
 
   let nextCursor: string | null = null;
 
-  if (blockedUsers.length > limit) {
-    const nextItem = blockedUsers.pop();
+  if (records.length > limit) {
+    const nextItem = records.pop();
     nextCursor = nextItem?._id.toString() || null;
   }
 
+  const blockedUsers = records.filter(r => r.status === "blocked");
+  const mutedUsers = records.filter(r => r.status === "muted");
+
   return {
-    data: blockedUsers,
+    data: {
+      blocked: blockedUsers,
+      muted: mutedUsers,
+    },
     nextCursor,
   };
 };
 
 export const UnBlockUser = async (req: Request) => {
   const blockedUser = req.params.blockedUser;
-  const blockerId = req.identity;
+  const blocker = req.identity;
 
-  if (!blockerId || !blockedUser) {
+  if (!blocker || !blockedUser) {
     throw new ApiError(400, "User ID missing.");
   }
 
@@ -546,18 +610,202 @@ export const UnBlockUser = async (req: Request) => {
     throw new ApiError(400, "Invalid user ID.");
   }
 
-  if (blockerId.toString() === blockedUser) {
+  if (blocker.toString() === blockedUser) {
     throw new ApiError(400, "You cannot unblock yourself.");
   }
 
-  const result = await Collections.BlockModel.findOneAndDelete({
-    blocker: blockerId,
+  const existing = await Collections.BlockModel.findOne({
+    blocker,
     blocked: blockedUser,
   });
 
-  if (!result) {
-    throw new ApiError(404, "User is not blocked.");
+  if (!existing) {
+    throw new ApiError(404, "User is neither blocked nor muted.");
   }
 
-  return result?.blocked.toString();
+  await Collections.BlockModel.deleteOne({ _id: existing._id });
+const members = [req.identity, blockedUser].sort(); 
+const membersHash = members.join("_");
+const dmRoom = await Collections.ChatRoom.findOne({
+  type: "dm",
+  membersHash
+}); 
+
+  return {
+    message:
+      existing.status === "blocked"
+        ? "User unblocked successfully."
+        : "User unmuted successfully.",
+    status: existing.status,
+    targetUser: blockedUser,
+    roomId:existing.roomId?.toString(),
+    dmRoom:dmRoom?._id.toString()
+  };
+};
+
+export const getFollowersFollowing = async (req: Request) => {
+  const { userId, viewerId, type } = req.query;
+
+  if (!userId || !viewerId) {
+    throw new ApiError(400, "userId and viewerId are required");
+  }
+
+  const limit = 20;
+
+  const rawCursor = req.query.cursor
+    ? JSON.parse(req.query.cursor as string)
+    : null;
+
+  const parsedCursor = rawCursor
+    ? {
+        createdAt: new Date(rawCursor.createdAt),
+        _id: new mongoose.Types.ObjectId(rawCursor._id),
+      }
+    : null;
+
+  const matchField = type === "followers" ? "following" : "follower";
+  const populateField = type === "followers" ? "follower" : "following";
+
+  const pipeline: any[] = [
+    {
+      $match: {
+        [matchField]: new mongoose.Types.ObjectId(userId as string),
+        status: "accepted",
+        ...(parsedCursor && {
+          $or: [
+            { createdAt: { $lt: parsedCursor.createdAt } },
+            {
+              createdAt: parsedCursor.createdAt,
+              _id: { $lt: parsedCursor._id },
+            },
+          ],
+        }),
+      },
+    },
+
+    { $sort: { createdAt: -1, _id: -1 } },
+
+    { $limit: limit + 1 },
+
+    {
+      $lookup: {
+        from: "users",
+        localField: populateField,
+        foreignField: "_id",
+        as: "user",
+      },
+    },
+    { $unwind: "$user" },
+
+    {
+      $lookup: {
+        from: "follows",
+        let: { listedUserId: "$user._id" },
+        pipeline: [
+          {
+            $match: {
+              $expr: {
+                $and: [
+                  { $eq: ["$follower", new mongoose.Types.ObjectId(viewerId as string)] },
+                  { $eq: ["$following", "$$listedUserId"] },
+                  { $eq: ["$status", "accepted"] },
+                ],
+              },
+            },
+          },
+          { $limit: 1 },
+        ],
+        as: "viewerFollow",
+      },
+    },
+
+    {
+      $addFields: {
+        isFollowing: { $gt: [{ $size: "$viewerFollow" }, 0] },
+      },
+    },
+
+    {
+      $project: {
+        _id: 1,
+        createdAt: 1,
+        user: {
+          _id: "$user._id",
+          username: "$user.username",
+          fullName: "$user.fullName",
+          profilePic: "$user.profilePic",
+          isFollowing: "$isFollowing",
+        },
+      },
+    },
+  ];
+
+  const results = await Collections.FollowModel.aggregate(pipeline);
+
+  const hasNext = results.length > limit;
+  const sliced = hasNext ? results.slice(0, limit) : results;
+  const last = sliced[sliced.length - 1];
+
+  return {
+    data: sliced.map((r) => r.user),
+    nextCursor: hasNext
+      ? {
+          createdAt: last.createdAt,
+          _id: last._id,
+        }
+      : null,
+    hasNext,
+  };
+};
+
+
+
+
+
+
+
+interface RoomPresenceResult {
+  roomId: string;
+  totalUsers: number;
+  onlineUsers: string[];
+  offlineUsers: string[];
+}
+
+export const getRoomOnlineUsers = async (
+  roomId: string
+): Promise<RoomPresenceResult> => {
+ 
+  const members = await Collections.ChatMember.find(
+    { roomId },
+    { userId: 1, _id: 0 }
+  ).lean();
+
+  const userIds = members.map(m => m.userId.toString());
+
+  if (!userIds.length) {
+    return {
+      roomId,
+      totalUsers: 0,
+      onlineUsers: [],
+      offlineUsers: [],
+    };
+  }
+
+  const presenceData =
+    await RedisHelpers.getUsersOnlineStatus(userIds);
+
+  const onlineUsers: string[] = [];
+  const offlineUsers: string[] = [];
+
+  for (const p of presenceData) {
+    if (p.isOnline) onlineUsers.push(p.userId);
+    else offlineUsers.push(p.userId);
+  }
+
+  return {
+    roomId,
+    totalUsers: userIds.length,
+    onlineUsers,
+    offlineUsers,
+  };
 };
