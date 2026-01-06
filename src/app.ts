@@ -33,8 +33,8 @@ app.use(cookieParser());
 app.use(authMiddleware)
 app.use(passport.initialize());
 
-app.get('/api/v1', (_, res: Response) => res.json({ success: true, message: 'API is running' }));
 
+app.get('/api/v1', (_, res: Response) => res.json({ success: true, message: 'API is running' }));
 app.all('', (_, res: Response) => {
   res.status(404).json({ success: false, message: 'Route not found' });
 });
