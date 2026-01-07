@@ -11,7 +11,8 @@ export const unprotechtedRouts = [
     "/api/v1/auth/resendOTP",
     "/api/v1/auth/send-emailVerification",
     "/api/v1/auth/verify-otp",
-    "/api/v1/auth/reset-password"
+    "/api/v1/auth/reset-password",
+    "/api/v1"
 
 
 ]
