@@ -12,7 +12,7 @@ import passport from './config/passport'
 const app: Application = express();
 
 app.use(helmet());
-app.use(cors({ origin:process.env.CLIENT_URI, credentials: true }));
+app.use(cors({ origin: [`${process.env.CLIENT_URI}`,'http://localhost:7000'], credentials: true }));
 
 if (process.env.NODE_ENV === 'development') {
   app.use(morgan('dev'));
