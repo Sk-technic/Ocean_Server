@@ -10,6 +10,7 @@ export class Peer {
 
   transports = new Map<string, WebRtcTransport>();
   producers = new Map<string, Producer>();
+  
   consumers = new Map<string, Consumer>();
 
   constructor(socketId: string) {
