@@ -293,6 +293,7 @@ export const SearchQuery = async (req: Request) => {
         firstName: 1,
         lastName: 1,
         profilePic: 1,
+        coverImage:1,
         bio: 1,
         isActive: 1,
         followersCount: 1,
